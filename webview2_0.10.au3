@@ -31,12 +31,12 @@ Func __webview2init()
 	; --- Embed and Extract the Correct Loader DLL ---
 	If @AutoItX64 Then
 		; Embeds the 64-bit loader into the compiled executable
-		FileInstall("\\npo.amr.corp.intel.com\coos\LNO_Validation\Validation_Data\_inbox\JeremyAbel\SharedOneNote\scripts\ManualStationControl\webview2\bin\WebView2Loader_x64.dll", $g_WVtempFolder & "\WebView2Loader.dll", $FC_OVERWRITE)
-		FileInstall("\\npo.amr.corp.intel.com\coos\LNO_Validation\Validation_Data\_inbox\JeremyAbel\SharedOneNote\scripts\ManualStationControl\webview2\bin\WebView2Helper_x64.dll", $g_WVtempFolder & "\WebView2Helper.dll", $FC_OVERWRITE)
+		FileInstall("...\scripts\ManualStationControl\webview2\bin\WebView2Loader_x64.dll", $g_WVtempFolder & "\WebView2Loader.dll", $FC_OVERWRITE)
+		FileInstall("...\scripts\ManualStationControl\webview2\bin\WebView2Helper_x64.dll", $g_WVtempFolder & "\WebView2Helper.dll", $FC_OVERWRITE)
 	Else
 		; Embeds the 32-bit loader into the compiled executable
-		FileInstall("\\npo.amr.corp.intel.com\coos\LNO_Validation\Validation_Data\_inbox\JeremyAbel\SharedOneNote\scripts\ManualStationControl\webview2\bin\WebView2Loader_x86.dll", $g_WVtempFolder & "\WebView2Loader.dll", $FC_OVERWRITE)
-		FileInstall("\\npo.amr.corp.intel.com\coos\LNO_Validation\Validation_Data\_inbox\JeremyAbel\SharedOneNote\scripts\ManualStationControl\webview2\bin\WebView2Helper_x86.dll", $g_WVtempFolder & "\WebView2Helper.dll", $FC_OVERWRITE)
+		FileInstall("...\scripts\ManualStationControl\webview2\bin\WebView2Loader_x86.dll", $g_WVtempFolder & "\WebView2Loader.dll", $FC_OVERWRITE)
+		FileInstall("...\scripts\ManualStationControl\webview2\bin\WebView2Helper_x86.dll", $g_WVtempFolder & "\WebView2Helper.dll", $FC_OVERWRITE)
 	EndIf
 
 EndFunc   ;==>__webview2init
