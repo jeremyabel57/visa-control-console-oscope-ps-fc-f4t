@@ -1,4 +1,3 @@
-50
 
 
 SEARCH:DELETEALL
@@ -113,6 +112,11 @@ read $top
 
 MEASUrement:MEAS1:RESUlts:ALLacq:MEAN?
 read $tbuf
+MEASUrement:MEAS1:RESUlts:ALLacq:MINimum?
+read $tbuf
+
+logfile 
+log tbuf={$tbuf}
 
 MEASUrement:INDICAtor:STATE ON
 MEASUrement:INDICAtor:WAVeform MEAS1

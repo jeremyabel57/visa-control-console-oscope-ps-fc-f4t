@@ -1,0 +1,2 @@
+I2C tBUF 100kHz,vscript_tbuf100.txt
+I2C thigh 100kHz,vscript_thigh100.txt
