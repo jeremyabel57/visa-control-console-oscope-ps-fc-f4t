@@ -1,0 +1,7 @@
+$=*IDN?
+$abc=*IDN?
+sleep 50
+if $abc=''
+{__viToggleMode($oDev)}
+$abc=*IDN?
+end

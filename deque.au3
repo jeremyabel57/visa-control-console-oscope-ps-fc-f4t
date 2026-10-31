@@ -71,7 +71,7 @@ __pQueSkip($opQue, $bFlag = "")         set or get the skip flag
 
 #ce
 
-
+Global $g_viPrintpQue
 
 
 ;---------------------------------------------------------------------- DE Queue
@@ -214,24 +214,12 @@ Func __StackNew()                                                       ; create
 EndFunc   ;==>__StackNew
 Func __StackPush($oDeque, $vItem)                                       ; stack push
 	Local $vR = __DequePushFront($oDeque, $vItem)
-
-	#forcedef $g_viPrintpQue
-	If $g_viPrintpQue Then
-		__ConsoleWriteVar($vItem, ", ", "__StackPush")
-		__ConsoleWriteVar($oDeque, ", ", "       into")
-	EndIf
-
+	If $g_viPrintpQue Then __ConsolePrintVars("__StackPush, ", "vItem", $vItem, "oDeque", $oDeque)
 	Return $vR
 EndFunc   ;==>__StackPush
 Func __StackPop($oDeque)                                                ; stack pop
 	Local $vItem = __DequePop($oDeque)
-
-	#forcedef $g_viPrintpQue
-	If $g_viPrintpQue Then
-		__ConsoleWriteVar($vItem, ", ", "__StackPop ")
-		__ConsoleWriteVar($oDeque, ", ", "    out of")
-	EndIf
-
+	If $g_viPrintpQue Then __ConsolePrintVars("__StackPop, ", "vItem", $vItem, "oDeque", $oDeque)
 	Return $vItem
 EndFunc   ;==>__StackPop
 Func __StackIsEmpty($oDeque)                                            ; is stack empty
@@ -302,9 +290,9 @@ Func __DequeToArray($oDeque)                                            ; copy o
 	Local $iSize = $iTail - $iHead + 1
 	If $iSize <= 0 Then Return $a
 	Local $i
-	redim $a[$iSize]
+	ReDim $a[$iSize]
 	For $i = $iHead To $iTail
-		$a[$i-$iHead] = $oDeque.Item(String($i))
+		$a[$i - $iHead] = $oDeque.Item(String($i))
 	Next
 	Return $a
 EndFunc   ;==>__DequeToArray
@@ -350,25 +338,13 @@ Func __pQuePush($opQue, $vItem)                                         ; pQue p
 	Local $iDelta = __DequeCheckTailLimit($opQue)
 	If $iDelta Then $opQue.Item("pc") = $opQue.Item("pc") + $iDelta     ; if queue is reseated then adjust 'pc' to match
 	Local $vR = __DequePush($opQue, $vItem)
-
-	#forcedef $g_viPrintpQue
-	If $g_viPrintpQue Then
-		__ConsoleWriteVar($vItem, ", ", "__pQuePush")
-		__ConsoleWriteVar($opQue, ", ", "      into")
-	EndIf
-
+	If $g_viPrintpQue Then __ConsolePrintVars("__pQuePush, ", "vItem", $vItem, "opQue", $opQue)
 	Return $vR
 EndFunc   ;==>__pQuePush
 
 Func __pQuePop($opQue)                                                  ; pQue pop
 	Local $vItem = __DequePop($opQue)
-
-	#forcedef $g_viPrintpQue
-	If $g_viPrintpQue Then
-		__ConsoleWriteVar($vItem, ", ", "__pQuePop ")
-		__ConsoleWriteVar($opQue, ", ", "    out of")
-	EndIf
-
+	If $g_viPrintpQue Then __ConsolePrintVars("__pQuePop, ", "vItem", $vItem, "opQue", $opQue)
 	Return $vItem
 EndFunc   ;==>__pQuePop
 
@@ -436,8 +412,7 @@ Func __pQuePCitem($opQue)                                               ; return
 	If @error > 0 Then Return SetError(@error, 0, 0)                    ;   if parked then, return 0 and @error=1,   or if done then return 0 and @error=2
 	__pQueIncPC($opQue)                                                 ;   increment PC
 	Local $vRet = $opQue.Item(String($i))                               ;   return the item (either an array (command) or queue object (command block) if all is well
-	#forcedef $g_viPrintpQue
-	If $g_viPrintpQue Then __ConsoleWriteVar($vRet, ", ", "pQue item")
+	If $g_viPrintpQue Then __ConsolePrintVars("__pQuePCitem, ", "vRet", $vRet)
 	Return $vRet
 EndFunc   ;==>__pQuePCitem
 

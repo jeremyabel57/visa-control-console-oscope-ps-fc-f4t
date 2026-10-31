@@ -31,31 +31,35 @@
 
 
 ; visa commands for Frequency counter
-Global Const $FC_VI_INIT = "INITiate:IMMediate"                             ; start the measurements/data collection
+Global Const $FC_VI_INIT = ":INITiate:IMMediate"                            ; start the measurements/data collection
 Global Const $FC_VI_RESET = "*RST"                                          ; reset settings
 Global Const $FC_VI_CLS = "*CLS"                                            ; clear current measurements
-Global Const $FC_VI_ABORT = "ABORt"                                         ; abort current measurement/data collection
-Global Const $FC_VI_CALC_CLEAR = "CALCulate:AVERage:CLEar"                  ; clear measurement statistics and restart from sample #1
-Global Const $FC_VI_CALC_COUNT = "CALCulate:AVERage:COUNt:CURRent?"         ; get the current sample count
-Global Const $FC_VI_CALC_ADEV = "CALCulate:AVERage:ADEViation?"             ; get the current Allan Deviation value
-Global Const $FC_VI_CALC_ALL = "CALCulate:AVERage:ALL?"                     ; get the current measurement stats: mean, stddev, min, max
-Global Const $FC_VI_READ1 = "DATA:LAST?"                                    ; get the last frequency reading
-Global Const $FC_VI_COUNT = "DATA:POINts?"                                  ; get the current number of samples measured
+Global Const $FC_VI_ABORT = ":ABORt"                                        ; abort current measurement/data collection
+Global Const $FC_VI_CALC_CLEAR = ":CALCulate:AVERage:CLEar"                 ; clear measurement statistics and restart from sample #1
+Global Const $FC_VI_CALC_COUNT = ":CALCulate:AVERage:COUNt:CURRent?"        ; get the current sample count
+Global Const $FC_VI_CALC_ADEV = ":CALCulate:AVERage:ADEViation?"            ; get the current Allan Deviation value
+Global Const $FC_VI_CALC_ALL = ":CALCulate:AVERage:ALL?"                    ; get the current measurement stats: mean, stddev, min, max
+Global Const $FC_VI_READ1 = ":DATA:LAST?"                                   ; get the last frequency reading
+Global Const $FC_VI_COUNT = ":DATA:POINts?"                                 ; get the current number of samples measured
 
 
 
+Global $g_fc_iReadTimer, $g_fc_iRefreshInterval = 100                       ; loop timer
 
 
 ; GUI elements
-Global $g_fc_cIpAddr, $g_fc_cScreenShot, $g_fc_cCaptureData, $g_hMainGui, $g_fc_cDevID, $g_fc_hScreen, $g_fc_cCaptureButton, _
+Global $g_fc_hIpAddr, $g_fc_cScreenShot, $g_fc_cCaptureData, $g_hMainGui, $g_fc_hDevID, $g_fc_hScreen, $g_fc_cCaptureButton, _
 		$g_fc_cMean, $g_fc_cAllanDev, $g_fc_cCount, $g_fc_cFreq, $g_fc_cMax, $g_fc_cMin, $g_fc_cStdDev, $g_fc_cCount, _
 		$g_fc_cRefreshInterval, $g_fc_cCountSpeed, $g_fc_cCountSpeedLbl, $g_fc_cCaptureCount, $g_fc_cCaptureInitCheck, _
-		$g_fc_iScreen = -1
+		$g_fc_cPPM, $g_fc_iScreen = -1
 
-Global $g_fc_bCommValid = 0                                                                                                      ; IP address and/or communications are valid
+Global $g_fc_bCommValid = False                                                                             ; IP address and/or communications are valid
 Global $g_fc_iRunTimer, $g_fc_fCountSpeed, $g_fc_mode, $g_fc_iTimer, $g_hTabFC, $g_fc_iTabIdx, _
 		$g_fc_bPicData, $g_fc_bPicDownloading = False, $g_fc_iScreen = -1
 
+
+Global $g_fc_fbfreq, $g_fc_fbmean, $g_fc_fbmax, $g_fc_fbmin, $g_fc_fbsdev, $g_fc_fbcount, $g_fc_fbadev      ; mailboxes for receiving data
+Global $g_fc_oDev, $g_fc_fbstats
 
 
 
@@ -68,16 +72,13 @@ Global $g_fc_iRunTimer, $g_fc_fCountSpeed, $g_fc_mode, $g_fc_iTimer, $g_hTabFC, 
 
 ; called after gui window is shown during init/setup
 Func fcTab_init()
-	fcTab_ConfigRead()
-	If GUICtrlRead($g_fc_cCaptureInitCheck) = $GUI_CHECKED Then __fc_Initialize()           ; reinitialize to start a new run
-
 	$g_fc_fCountSpeed = 0                                                                   ; calculated sample speed estimate
 	$g_fc_mode = 2                                                                          ; 0 = monitor mode,
 	fcTab_GoToIdleMode()                                                                    ; 1 = capture mode (wait for sample count to reach limit then pull the data)
 	;                                           											; 2 = idle, done with capture, waiting
-
 	$g_fc_iTimer = TimerInit()                                                              ; Track time for background polling (runs every 1500ms without freezing the GUI)
-
+	$g_fc_oDev = fcTab_GetIP()
+	$g_fc_iReadTimer = TimerInit()
 	LoopRegister("fcTab_Loop")
 EndFunc   ;==>fcTab_init
 
@@ -89,29 +90,33 @@ EndFunc   ;==>fcTab_init
 Func fcTab_GuiCreate($iTabIdx, $oCanvas, $hCanvas)
 	$g_fc_iTabIdx = $iTabIdx                                            ; save for later to determine if we are the selected tab
 
+	Local $g_fc_cAllanDevUnits, $g_fc_cFreqUnits, $g_fc_cMaxUnits, $g_fc_cMinUnits, $g_fc_cMeanUnits, $g_fc_cPPMUnits, $g_fc_cStdDevUnits
+
 	Local $w1 = 120
+	Local $w2 = $w1 + $w1
 	Local $sTip
 	Local $x = 10
 	Local $y = 5
+	Local $x2
 
-	GUICtrlCreateLabel("IP Address:", 10, $y + 3, 65, 17)
+	GUICtrlCreateLabel("IP Address:", $x, $y + 3, 65, 17)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	$g_fc_cIpAddr = GUICtrlCreateCombo("", 75, $y, 95, 22)
+	$g_fc_hIpAddr = GUICtrlCreateCombo("", $x + 65, $y, $w1 + 95, 22)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetOnEvent(-1, "fcTab_OnIpAddrOrRefresh")
 	GUICtrlSetData(-1, "|192.168.0.17", "192.168.0.17")
-	GUICtrlCreateButton($ICON_SEARCH, 170, $y - 3, 25, 25)
+	GUICtrlCreateButton($ICON_SEARCH, $x + $w1 + 160, $y - 3, 25, 25)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetFont(-1, 20, 600)
 	GUICtrlSetTip(-1, "Scan subnet 192.168.0.0 for possible VISA devices")
 	GUICtrlSetOnEvent(-1, "fcTab_ScanNetwork")
-	$y = $y + 25
 
-	GUICtrlCreateLabel("Device:", 10, $y + 3, 40, 17)
+	$x2 = $x + 135 + $w2
+	GUICtrlCreateLabel("Device:", $x2, $y + 3, 40, 17)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	$g_fc_cDevID = GUICtrlCreateInput("", 50, $y, $w1 + $w1 + 65, 20, BitOR($GUI_SS_DEFAULT_INPUT, $ES_READONLY))
+	$g_fc_hDevID = GUICtrlCreateInput("", $x2 + 40, $y, $w2 + 65, 20, BitOR($GUI_SS_DEFAULT_INPUT, $ES_READONLY))
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	GUICtrlCreateButton($ICON_REFRESH, 115 + $w1 + $w1, $y - 3, 25, 25)
+	GUICtrlCreateButton($ICON_REFRESH, $x2 + 105 + $w2, $y - 3, 25, 25)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetTip(-1, "Reconnect to Frequency Counter")
 	GUICtrlSetFont(-1, 17, 600)
@@ -128,13 +133,17 @@ Func fcTab_GuiCreate($iTabIdx, $oCanvas, $hCanvas)
 	; capture data button
 	; wait for minimum 1000 samples, then capture checkbox
 
-	GUICtrlCreateLabel("Frequency Monitor", 10, $y + 1, $w1 + $w1 + 60, 17)
+	GUICtrlCreateLabel("Frequency Monitor", 10, $y + 1, $w2 + 60, 17)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetFont(-1, 11, 600)
-
-	GUICtrlCreateButton("Configure FC", $w1 + $w1 + 60, $y - 3, 80, 25)
+	GUICtrlCreateButton("Configure FC", $w2 + 30, $y - 3, 80, 25)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetOnEvent(-1, "fcTab_OnResetStats")
+	GUICtrlSetTip(-1, "Reset the Frequency Counter and configure for measuring Allan Deviation")
+	GUICtrlCreateButton($ICON_SCREENSHOT, $w1 + $w1 + 115, $y - 3, 25, 25, BitOR($GUI_SS_DEFAULT_BUTTON, $BS_CENTER, $SS_CENTERIMAGE))
+	GUICtrlSetFont(-1, 16)
+	GUICtrlSetResizing(-1, $GUI_DOCKALL)
+	GUICtrlSetOnEvent(-1, "fcTab_PicRefresh")
 	$y = $y + 25
 
 	GUICtrlCreateLabel("Freq:", 10, $y + 3, 40, 17, BitOR($GUI_SS_DEFAULT_LABEL, $SS_RIGHT))
@@ -146,7 +155,13 @@ Func fcTab_GuiCreate($iTabIdx, $oCanvas, $hCanvas)
 	GUICtrlSetTip(-1, $sTip)
 	$g_fc_cFreqUnits = GUICtrlCreateLabel("Hz", $w1 + 50, $y + 3, 20, 17)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	GUICtrlSetTip(-1, $sTip)
+
+	GUICtrlCreateLabel("PPM:", $w1 + 80, $y + 3, 40, 17, BitOR($GUI_SS_DEFAULT_LABEL, $SS_RIGHT))
+	GUICtrlSetResizing(-1, $GUI_DOCKALL)
+	$g_fc_cPPM = GUICtrlCreateInput("---", $w1 + 120, $y, $w1, 20, BitOR($GUI_SS_DEFAULT_INPUT, $ES_READONLY, $WS_TABSTOP, $ES_RIGHT))
+	GUICtrlSetResizing(-1, $GUI_DOCKALL)
+	$g_fc_cPPMUnits = GUICtrlCreateLabel("Hz", $w2 + 120, $y + 3, 20, 17)
+	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	$y = $y + 25
 
 	GUICtrlCreateLabel("Mean:", 10, $y + 3, 40, 17, BitOR($GUI_SS_DEFAULT_LABEL, $SS_RIGHT))
@@ -159,7 +174,7 @@ Func fcTab_GuiCreate($iTabIdx, $oCanvas, $hCanvas)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	$g_fc_cMax = GUICtrlCreateInput("---", $w1 + 120, $y, $w1, 20, BitOR($GUI_SS_DEFAULT_INPUT, $ES_READONLY, $WS_TABSTOP, $ES_RIGHT))
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	$g_fc_cMaxUnits = GUICtrlCreateLabel("Hz", $w1 + $w1 + 120, $y + 3, 20, 17)
+	$g_fc_cMaxUnits = GUICtrlCreateLabel("Hz", $w2 + 120, $y + 3, 20, 17)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	$y = $y + 25
 
@@ -173,7 +188,7 @@ Func fcTab_GuiCreate($iTabIdx, $oCanvas, $hCanvas)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	$g_fc_cMin = GUICtrlCreateInput("---", $w1 + 120, $y, $w1, 20, BitOR($GUI_SS_DEFAULT_INPUT, $ES_READONLY, $WS_TABSTOP, $ES_RIGHT))
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	$g_fc_cMinUnits = GUICtrlCreateLabel("Hz", $w1 + $w1 + 120, $y + 3, 20, 17)
+	$g_fc_cMinUnits = GUICtrlCreateLabel("Hz", $w2 + 120, $y + 3, 20, 17)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	$y = $y + 25
 
@@ -188,7 +203,7 @@ Func fcTab_GuiCreate($iTabIdx, $oCanvas, $hCanvas)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	$g_fc_cAllanDev = GUICtrlCreateInput("---", $w1 + 120, $y, $w1, 20, BitOR($GUI_SS_DEFAULT_INPUT, $ES_READONLY, $WS_TABSTOP, $ES_RIGHT))
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	$g_fc_cAllanDevUnits = GUICtrlCreateLabel("Hz", $w1 + $w1 + 120, $y + 3, 20, 17)
+	$g_fc_cAllanDevUnits = GUICtrlCreateLabel("Hz", $w2 + 120, $y + 3, 20, 17)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	$y = $y + 25
 
@@ -214,7 +229,7 @@ Func fcTab_GuiCreate($iTabIdx, $oCanvas, $hCanvas)
 	GUICtrlCreateLabel("Capture", 10, $y + 1, 70, 17)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetFont(-1, 11, 600)
-	GUICtrlCreateLabel("Preview signal above, then click button to measure.", 80, $y + 3, $w1 + $w1 + 60, 17)
+	GUICtrlCreateLabel("Preview signal above, then click button to measure.", 80, $y + 3, $w2 + 60, 17)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetFont(-1, -1, 600)
 	GUICtrlSetColor(-1, 0xFF0000)
@@ -222,28 +237,34 @@ Func fcTab_GuiCreate($iTabIdx, $oCanvas, $hCanvas)
 
 	GUICtrlCreateLabel("Screen:", 10, $y + 3, 50, 17, BitOR($GUI_SS_DEFAULT_LABEL, $SS_RIGHT))
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	$g_fc_cScreenShot = GUICtrlCreateInput("...", 60, $y, $w1 + $w1 + 30, 20, BitOR($GUI_SS_DEFAULT_INPUT, $GUI_SS_DEFAULT_INPUT))
+	$g_fc_cScreenShot = GUICtrlCreateInput("...", 60, $y, $w2 + 30, 20, BitOR($GUI_SS_DEFAULT_INPUT, $GUI_SS_DEFAULT_INPUT))
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	GUICtrlCreateButton("...", $w1 + $w1 + 90, $y - 3, 25, 25)
+	GUICtrlCreateButton("...", $w2 + 90, $y - 3, 25, 25)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetOnEvent(-1, "fcTab_ScreenShotBrowse")
-	$g_fc_cScreenShotBtn = GUICtrlCreateButton($ICON_SAVE, $w1 + $w1 + 115, $y - 3, 25, 25)
+	GUICtrlSetTip(-1, "Browse for where to save the screen shot")
+
+	$g_fc_cScreenShotBtn = GUICtrlCreateButton($ICON_SAVE, $w2 + 115, $y - 3, 25, 25)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetFont(-1, 16)
 	GUICtrlSetOnEvent(-1, "fcTab_OnScreenShotBtn")
+	GUICtrlSetTip(-1, "Save the screen shot that is shown here at the right")
 	$y = $y + 25
 
 	GUICtrlCreateLabel("Data:", 10, $y + 3, 50, 17, BitOR($GUI_SS_DEFAULT_LABEL, $SS_RIGHT))
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	$g_fc_cCaptureData = GUICtrlCreateInput("...", 60, $y, $w1 + $w1 + 30, 20, BitOR($GUI_SS_DEFAULT_INPUT, $GUI_SS_DEFAULT_INPUT))
+	$g_fc_cCaptureData = GUICtrlCreateInput("...", 60, $y, $w2 + 30, 20, BitOR($GUI_SS_DEFAULT_INPUT, $GUI_SS_DEFAULT_INPUT))
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	GUICtrlCreateButton("...", $w1 + $w1 + 90, $y - 3, 25, 25)
+	GUICtrlCreateButton("...", $w2 + 90, $y - 3, 25, 25)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetOnEvent(-1, "fcTab_CaptureDataBrowse")
-	GUICtrlCreateButton($ICON_SAVE, $w1 + $w1 + 115, $y - 3, 25, 25)
+	GUICtrlSetTip(-1, "Browse for where to save the measurement data")
+
+	GUICtrlCreateButton($ICON_SAVE, $w2 + 115, $y - 3, 25, 25)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetFont(-1, 16)
 	GUICtrlSetOnEvent(-1, "fcTab_OnCaptureDataBtn")
+	GUICtrlSetTip(-1, "Save the measurement data shown here")
 	$y = $y + 25
 
 	GUICtrlCreateLabel("Count >=", 10, $y + 3, 50, 17, BitOR($GUI_SS_DEFAULT_LABEL, $SS_RIGHT))
@@ -253,28 +274,28 @@ Func fcTab_GuiCreate($iTabIdx, $oCanvas, $hCanvas)
 	$g_fc_cCaptureButton = GUICtrlCreateButton("Run", $w1 + 35, $y - 3, 100, 25)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetOnEvent(-1, "fcTab_OnCaptureButton")
+	GUICtrlSetTip(-1, "Rotate thru Idle, Monitor, and Capture modes")
+
 	$g_fc_cCaptureInitCheck = GUICtrlCreateCheckbox("Initialize", $w1 + 138, $y, 70, 20)
 	GUICtrlSetState(-1, 0)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
+	GUICtrlCreateButton($ICON_SAVE, $w2 + 115, $y - 3, 25, 25)
+	GUICtrlSetResizing(-1, $GUI_DOCKALL)
+	GUICtrlSetFont(-1, 16)
+	GUICtrlSetOnEvent(-1, "fcTab_OnCaptureAll")
+	GUICtrlSetTip(-1, "Save both measurement data and screenshot")
 	$y = $y + 25
 
 	Local $issHeight = 272                          ; expected dimensions of screenshot
 	Local $issWidth = 480
-	$x = 140 + $w1 + $w1 + 10
+	$x += 135 + $w2
 	Local $y2 = 30
-
-	GUICtrlCreateButton($ICON_SCREENSHOT, $x, $y2 - 3, 25, 25)
-	GUICtrlSetFont(-1, 16)
-	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	GUICtrlSetOnEvent(-1, "fcTab_PicRefresh")
-	$y2 += 25
 
 	$g_fc_hScreen = GUICtrlGetHandle(GUICtrlCreatePic("", $x, $y2, $issWidth, $issHeight))
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	$y2 += $issHeight + 5
 	$y = _Max($y, $y2)
-	$x = $x + $issWidth
-
+	$x = $x + $issWidth + 5
 
 	Local $a[] = [$x, $y]
 	Return $a
@@ -297,17 +318,29 @@ EndFunc   ;==>fcTab_GuiCreate
 
 Func fcTab_OnIpAddrOrRefresh()
 	fcTab_GetID()
+	If $g_fc_oDev = '' Then $g_fc_oDev = fcTab_GetIP()
+	__viCmd($g_fc_oDev, 'sleep 200')
+	fcTab_PicRefresh()
+	__viCmd($g_fc_oDev, 'sleep 500')
 	If GUICtrlRead($g_fc_cCaptureInitCheck) = $GUI_CHECKED Then __fc_Initialize()
 EndFunc   ;==>fcTab_OnIpAddrOrRefresh
 
 Func fcTab_OnResetStats()
-	__fc_Initialize(fcTab_GetIP())
+	__fc_Initialize()
+	;Local $ipAddr = fcTab_GetIP()
+	;__viCmd($ipAddr, 'sleep 500')
+	;fcTab_PicRefresh()
 EndFunc   ;==>fcTab_OnResetStats
 
 Func fcTab_OnCaptureDataBtn()
 	If Not __IsFullPathSpecified(GUICtrlRead($g_fc_cCaptureData)) Then fcTab_CaptureDataBrowse()
 	__fc_SaveData()
 EndFunc   ;==>fcTab_OnCaptureDataBtn
+
+Func fcTab_OnCaptureAll()
+	fcTab_OnCaptureDataBtn()
+	fcTab_OnScreenShotBtn()
+EndFunc   ;==>fcTab_OnCaptureAll
 
 Func fcTab_OnCaptureButton()
 	If $g_fc_mode = 1 Then          ; cancelling or exiting capture mode
@@ -320,13 +353,13 @@ Func fcTab_OnCaptureButton()
 EndFunc   ;==>fcTab_OnCaptureButton
 
 Func fcTab_PicRefresh()             ; download latest screenshot from FC and show in the gui
-	$g_fc_bPicDownloading = True
-	$g_fc_bPicData = ''
-	Local $ipAddr = fcTab_GetIP()
 	Local $aCmds = [ _
-			'HCOPy:SDUMp:DATA:FORMat PNG', _
-			'$g_fc_bPicData=HCOPy:SDUMp:DATA?']
-	__viScript($ipAddr, $aCmds, "", 15000)
+			"flush", _
+			"$=" & $VI_REQ_ERR, _
+			"HCOPy:SDUMp:DATA:FORMat PNG", _
+			"sleep 50", _
+			"$g_fc_bPicData:=HCOPy:SDUMp:DATA?"]
+	__viGuiPicRefresh($g_fc_bPicDownloading, $g_fc_bPicData, fcTab_GetIP(), $aCmds)
 EndFunc   ;==>fcTab_PicRefresh
 
 
@@ -362,7 +395,9 @@ Func fcTab_GoToMonitorMode()
 	GUICtrlSetColor($g_fc_cCaptureButton, $COLOR_BLACK)
 	GUICtrlSetData($g_fc_cCountSpeedLbl, "Speed:")
 	$g_fc_mode = 0
-	$g_fc_fCountSpeed = 0                                                                           ; reset speed calculation
+	$g_fc_fCountSpeed = -1                                                                           ; reset speed calculation
+	;__viCmd($g_fc_oDev,$FC_VI_INIT)
+	;$g_fc_iTimer = TimerInit()
 EndFunc   ;==>fcTab_GoToMonitorMode
 
 
@@ -375,6 +410,8 @@ Func fcTab_GoToRunMode()
 	GUICtrlSetData($g_fc_cCountSpeedLbl, "ETA:")
 	$g_fc_iRunTimer = TimerInit()
 	$g_fc_mode = 1
+	__viCmd($g_fc_oDev, "flush")
+	__viCmd($g_fc_oDev, "$=" & $VI_REQ_ERR)
 EndFunc   ;==>fcTab_GoToRunMode
 
 
@@ -391,7 +428,6 @@ Func fcTab_ScreenShotBrowse()
 EndFunc   ;==>fcTab_ScreenShotBrowse
 
 
-
 Func fcTab_CaptureDataBrowse()
 	Local $sDrive, $sDir, $sFileName, $sExtension
 	_PathSplit(GUICtrlRead($g_fc_cCaptureData), $sDrive, $sDir, $sFileName, $sExtension)
@@ -405,29 +441,29 @@ EndFunc   ;==>fcTab_CaptureDataBrowse
 
 
 
-
+#cs
 ;				read the statistics from the frequency counter, resetting the data collection
 Func fcTab_ReadStats($ipAddr = fcTab_GetIP())
 	Local Const $fAlpha = 0.8                                                                       ; for weighted average of samples per second calculation
 	Local $sF, $sStats, $sAllanDevVal, $i
-	Local $oDev = fcTab_GetIP()
 	Local $iTimeDiff = TimerDiff($g_fc_iTimer)
+	If $g_fc_oDev = '' Then $g_fc_oDev = fcTab_GetIP()
 
-	__viCmd($oDev, $FC_VI_ABORT)                                                                    ; stop the current calculations so we can grab the data
+	__viCmd($g_fc_oDev, $FC_VI_ABORT)                                                               ; stop the current calculations so we can grab the data
 	Sleep(100)
 
-	Local $iCountVal = __viReqBl($oDev, $FC_VI_CALC_COUNT, 1000)                                    ; get the number of measurement samples
+	Local $iCountVal = __viReqBl($g_fc_oDev, $FC_VI_CALC_COUNT, 1000)                               ; get the number of measurement samples
 	If @error Or $iCountVal < 2 Then Return
 
-	$sF = __viReqBl($oDev, $FC_VI_READ1, 1500)                                                      ; get the most recent frequency measurement
+	$sF = __viReqBl($g_fc_oDev, $FC_VI_READ1, 1500)                                                 ; get the most recent frequency measurement
 	If @error Then $sF = ""
 	$i = StringInStr($sF, " ")
 	If $i Then $sF = StringLeft($sF, $i - 1)
-	$sStats = __viReqBl($oDev, $FC_VI_CALC_ALL, 1500)                                               ; get the statistical calculations
+	$sStats = __viReqBl($g_fc_oDev, $FC_VI_CALC_ALL, 1500)                                          ; get the statistical calculations
 	If @error Then $sStats = ""
-	$sAllanDevVal = __viReqBl($oDev, $FC_VI_CALC_ADEV, 1000)                                        ; get the Allan Deviation
+	$sAllanDevVal = __viReqBl($g_fc_oDev, $FC_VI_CALC_ADEV, 1000)                                   ; get the Allan Deviation
 	If @error Then $sAllanDevVal = ""
-	__viCmdBl($oDev, $FC_VI_INIT)                                                                   ; have the counter start taking new measurements
+	__viCmdBl($g_fc_oDev, $FC_VI_INIT)                                                              ; have the counter start taking new measurements
 	$g_fc_iTimer = TimerInit()
 
 	Local $fCurrentSpeed = 1000 * $iCountVal / $iTimeDiff                                           ; current count speed in samples per second
@@ -437,14 +473,6 @@ Func fcTab_ReadStats($ipAddr = fcTab_GetIP())
 		$g_fc_fCountSpeed = $fCurrentSpeed * $fAlpha + $g_fc_fCountSpeed * (1 - $fAlpha)
 	EndIf
 
-	;__ConsolePrintVar("ReadStats", "g_fc_iTimer", $g_fc_iTimer, "iTimerDiff", $iTimeDiff, "fCurrentSpeed", $fCurrentSpeed, _
-	;		"g_fc_fCountSpeed", $g_fc_fCountSpeed, "iCountVal", $iCountVal)
-
-
-	;__ConsoleWriteVar($sF, ", ", "readStats sf")
-	;__ConsoleWriteVar($sStats, ", ", "readStats aStats")
-	;__ConsoleWriteVar($sAllanDevVal, ", ", "readStats sAllanDevVal")
-	;__ConsoleWriteVar($iCountVal, ", ", "readStats iCountVal")
 
 	If $sF <> "" Then _
 			GUICtrlSetData($g_fc_cFreq, Number(StringMid($sF, StringInStr($sF, "+")), $NUMBER_DOUBLE))
@@ -463,7 +491,7 @@ Func fcTab_ReadStats($ipAddr = fcTab_GetIP())
 	GUICtrlSetData($g_fc_cCountSpeed, StringFormat("%.1f", Number($g_fc_fCountSpeed)))              ; Display calculated samples per second data collection
 
 EndFunc   ;==>fcTab_ReadStats
-
+#ce
 
 
 
@@ -473,34 +501,86 @@ EndFunc   ;==>fcTab_ReadStats
 ; Background Polling Subroutines
 
 Func fcTab_Loop()
-	Local $iRefreshInt = Int(Number(GUICtrlRead($g_fc_cRefreshInterval)) * 1000)
-	If $iRefreshInt = 0 Then $iRefreshInt = 10000
-	Local $iTimeDiff = TimerDiff($g_fc_iTimer)
+	If TimerDiff($g_fc_iReadTimer) < $g_fc_iRefreshInterval Then Return
+	$g_fc_iReadTimer = TimerInit()
 
-	If $g_fc_bPicDownloading Then                                                           ; when screenshot download is received then update the gui
-		If IsBinary($g_fc_bPicData) Then
-			__viParsePicture($g_fc_bPicData)
-			Local $oCanvas = $g_aCanvas[$g_fc_iTabIdx]
-			If $g_fc_iScreen < 0 Then $g_fc_iScreen = __Canvas_ZoomFind($oCanvas, $g_fc_hScreen)
-			If $g_fc_iScreen >= 0 Then
-				Local $aCtrl = $oCanvas.Item('aCtrls')
-				$aCtrl[$g_fc_iScreen][5] = $g_fc_bPicData
-				$oCanvas.Item('aCtrls') = $aCtrl
-				;__ConsolePrintVar("picdl", "iScreen", $g_fc_iScreen, "aCtrl", $aCtrl)
-				;__GUICtrlSetPicture($g_fc_hScreen, $g_fc_bPicData, True)
-				If GUICtrlRead($g_cTab) = $g_fc_iTabIdx Then __Canvas_AdjZoom($oCanvas)     ; adjust the picture to the current zoom scale and put it in the gui
-				$g_fc_bPicData = 0
-			EndIf
-			$g_fc_bPicDownloading = False
-		EndIf
+	Local $iRefreshInt = Int(Number(GUICtrlRead($g_fc_cRefreshInterval)) * 1000)
+	If $iRefreshInt <= 0 Then $iRefreshInt = 10000
+	Local $iTimeDiff = TimerDiff($g_fc_iTimer)
+	;If $g_fc_oDev = '' Then $g_fc_oDev = fcTab_GetIP()
+	Local $i, $j
+
+	__viGuiPicLoop($g_fc_bPicDownloading, $g_fc_bPicData, $g_fc_iTabIdx, $g_fc_iScreen, $g_fc_hScreen)      ; check if any screen image was downloaded for the gui
+
+	$j = $g_fc_fbfreq
+	If $j <> '' Then
+		$i = StringInStr($j, " ")
+		If $i Then $j = StringLeft($j, $i - 1)
+		GUICtrlSetData($g_fc_cFreq, Number(StringMid($j, StringInStr($j, "+")), $NUMBER_DOUBLE))
+		$g_fc_fbfreq = ''
 	EndIf
 
-	If $g_fc_bCommValid = 0 Or $iTimeDiff < $iRefreshInt Then Return
+	$j = $g_fc_fbstats
+	If $j <> '' Then
+		Local $aTokens = StringSplit($j, ",")
+		If $aTokens[0] >= 4 Then
+			GUICtrlSetData($g_fc_cMean, Number($aTokens[1], $NUMBER_DOUBLE))
+			GUICtrlSetData($g_fc_cStdDev, Number($aTokens[2], $NUMBER_DOUBLE))
+			GUICtrlSetData($g_fc_cMin, Number($aTokens[3], $NUMBER_DOUBLE))
+			GUICtrlSetData($g_fc_cMax, Number($aTokens[4], $NUMBER_DOUBLE))
+		EndIf
+		$g_fc_fbstats = ''
+	EndIf
+
+	$j = $g_fc_fbcount
+	If $j <> '' Then
+		Local $fAlpha = 0.8                                                                     ; for weighted average of samples per second calculation
+		$j = Int($j)
+		$g_fc_iTimer = TimerInit()
+		GUICtrlSetData($g_fc_cCount, $j)
+		Local $fCurrentSpeed = 1000 * $j / $iTimeDiff                                           ; current count speed in samples per second
+		$g_fc_fCountSpeed = Number($g_fc_fCountSpeed)
+		If $g_fc_fCountSpeed = -1 Then                                                          ; calculate a weighted average sample speed
+			$g_fc_fCountSpeed = 0                                                               ; toss first measurement as the time delta does not match it
+		ElseIf $g_fc_fCountSpeed = 0 Then
+			$g_fc_fCountSpeed = $fCurrentSpeed
+		Else
+			$g_fc_fCountSpeed = $fCurrentSpeed * $fAlpha + $g_fc_fCountSpeed * (1 - $fAlpha)
+		EndIf
+		GUICtrlSetData($g_fc_cCountSpeed, StringFormat("%.1f", Number($g_fc_fCountSpeed)))      ; Display calculated samples per second data collection
+		$g_fc_fbcount = ''
+	EndIf
+
+	$j = $g_fc_fbadev
+	If $j <> '' Then
+		$j = Number($j, $NUMBER_DOUBLE)
+		GUICtrlSetData($g_fc_cAllanDev, $j)
+		GUICtrlSetData($g_fc_cPPM, $j * 1000000 / Number(GUICtrlRead($g_fc_cMean), $NUMBER_DOUBLE))
+		$g_fc_fbadev = ''
+	EndIf
+
+
+	If Not $g_fc_bCommValid Or $iTimeDiff < $iRefreshInt Then Return
 
 	If $g_fc_mode = 0 Then                                                                  ; in monitor mode
 		If GUICtrlRead($g_cTab) = $g_fc_iTabIdx Then                                        ;   only monitor if we are the visible tab
 			;fcTab_PicRefresh()
-			fcTab_ReadStats()
+			If __viIsIdle($g_fc_oDev) Then
+				Local $aCmds[] = [ _
+						"$g_fc_fbcount1=" & $FC_VI_COUNT, _
+						"set $g_fc_fbcount $g_fc_fbcount1", _
+						"if $g_fc_fbcount1 > 2", _
+						$FC_VI_ABORT, _
+						"sleep 100", _
+						"$g_fc_fbfreq=" & $FC_VI_READ1, _
+						"$g_fc_fbstats=" & $FC_VI_CALC_ALL, _
+						"$g_fc_fbadev=" & $FC_VI_CALC_ADEV, _
+						$FC_VI_INIT, _
+						"end", _
+						"sleep " & $iRefreshInt _
+						]
+				__viScript($g_fc_oDev, $aCmds)
+			EndIf
 		EndIf
 
 	ElseIf $g_fc_mode = 1 Then                                                              ; in capture mode, let the frequency counter measure the signal and calculate the statistics
@@ -529,20 +609,7 @@ Func fcTab_Run()
 	If $iCountVal < $iCaptureCount Then Return
 
 	fcTab_PicRefresh()
-
-	;__fc_ScreenShot(0)                                                                  ; save screenshot
-	;Local $iErrScreen = @error
-	;fcTab_ReadStats()                                                                   ; read statistics
-	;__fc_SaveData(0)                                                                    ; save to data file
-	;Local $iErrData = @error
 	fcTab_GoToIdleMode()
-	;Local $sDataFile = GUICtrlRead($g_fc_cCaptureData)
-	;Local $sScreenFile = GUICtrlRead($g_fc_cScreenShot)
-	;Local $s = ($iErrScreen ? "ERROR saving screenshot" : "Screen shot saved") & " to:" & @CRLF & @CRLF & _
-	;		$sScreenFile & @CRLF & @CRLF & _
-	;		($iErrData ? "ERROR recording measurements" : "Measurement Statistics saved") & " to:" & @CRLF & @CRLF & _
-	;		$sDataFile & @CRLF
-	;MsgBox($MB_OK, "Frequency Data Captured", $s)
 EndFunc   ;==>fcTab_Run
 
 
@@ -561,7 +628,8 @@ EndFunc   ;==>fcTab_Run
 
 
 Func __fc_ReadCount($ipAddr = fcTab_GetIP())                                  ; get the current realtime sample count
-	Return Int(__viReqBl($ipAddr, $FC_VI_COUNT))
+	If $g_fc_oDev = '' Then $g_fc_oDev = $ipAddr
+	Return Int(__viReqBl($g_fc_oDev, $FC_VI_COUNT))
 EndFunc   ;==>__fc_ReadCount
 
 
@@ -571,23 +639,23 @@ Func __fc_Initialize($ipAddr = fcTab_GetIP())
 			$FC_VI_ABORT, _                     ; abort any prior running functions
 			$VI_RST, _                          ; reset settings
 			$VI_CLS, _                          ; clear status
-			"CONFigure:FREQuency (@1)", _       ; Establish base frequency measurement on Ch 1
+			":CONFigure:FREQuency (@1)", _      ; Establish base frequency measurement on Ch 1
 			$VI_CLS, _                          ; clear status
-			"INPut1:COUPling AC", _             ; Set coupling to AC (or DC depending on source)
-			"INPut1:IMPedance 50", _            ; Set input impedance to 50 Ohms (or 1M Ohms)
-			"INPut1:LEVel:AUTO OFF", _          ; Turn off auto-leveling to prevent measurement hiccups
-			"INPut1:LEVel 0.0", _               ; Set an absolute trigger level (e.g., 0 Volts)
-			"INPut1:NREJect OFF", _             ; turn off noise reject filter
-			"SENSe:FREQuency:MODE RCON", _      ; CRITICAL: Set to Raw Continuous (pi-counting) mode for Allan Deviation
-			"SENSe:FREQuency:GATE:TIME 0.1", _  ; Set your gate time / Tau interval (e.g., 100 ms)
-			"SAMPle:COUNt 1000000", _           ; Set total samples per trigger batch (e.g., 1000 Samples)
-			"TRIGger:COUNt 1", _                ; In continuous mode, Trigger Count must be exactly 1
-			"TRIGger:DELay 0", _                ; set trigger delay to 0
-			"CALCulate:STATe ON", _             ; Turn on the calculation subsystem
-			"CALCulate:AVERage:STATe ON", _     ; Turn on data statistics (Mean, StdDev, Min, Max, Pk-Pk)
+			":INPut1:COUPling AC", _            ; Set coupling to AC (or DC depending on source)
+			":INPut1:IMPedance 50", _           ; Set input impedance to 50 Ohms (or 1M Ohms)
+			":INPut1:LEVel:AUTO OFF", _         ; Turn off auto-leveling to prevent measurement hiccups
+			":INPut1:LEVel 0.0", _              ; Set an absolute trigger level (e.g., 0 Volts)
+			":INPut1:NREJect OFF", _            ; turn off noise reject filter
+			":SENSe:FREQuency:MODE RCON", _     ; CRITICAL: Set to Raw Continuous (pi-counting) mode for Allan Deviation
+			":SENSe:FREQuency:GATE:TIME 0.1", _ ; Set your gate time / Tau interval (e.g., 100 ms)
+			":SAMPle:COUNt 1000000", _          ; Set total samples per trigger batch (e.g., 1000 Samples)
+			":TRIGger:COUNt 1", _               ; In continuous mode, Trigger Count must be exactly 1
+			":TRIGger:DELay 0", _               ; set trigger delay to 0
+			":CALCulate:STATe ON", _            ; Turn on the calculation subsystem
+			":CALCulate:AVERage:STATe ON", _    ; Turn on data statistics (Mean, StdDev, Min, Max, Pk-Pk)
 			$FC_VI_CALC_CLEAR, _                ; clear data statistics
 			$FC_VI_INIT]                        ; start data collection
-	__viScript($ipAddr, $aCmds)
+	__viScript($ipAddr, $aCmds, "", 1000, 100)
 EndFunc   ;==>__fc_Initialize
 
 
@@ -605,8 +673,8 @@ EndFunc   ;==>__fc_ResetStats
 ; in:		$hField = gui element to put the measurement into
 ;			$sReq = request visa command to get data
 Func __fc_GuiRead($hField, $sReq)
-	Local $oDev = fcTab_GetIP()
-	Local $fR = __viReqBl($oDev, $sReq)
+	If $g_fc_oDev = '' Then $g_fc_oDev = fcTab_GetIP()
+	Local $fR = __viReqBl($g_fc_oDev, $sReq)
 	If @error Then Return SetError(@error, @extended, -1)
 	GUICtrlSetData($hField, Number($fR, $NUMBER_DOUBLE))
 EndFunc   ;==>__fc_GuiRead
@@ -614,28 +682,32 @@ EndFunc   ;==>__fc_GuiRead
 
 
 Func fcTab_GetIP()
-	Return "raw:" & __viGetIP($g_fc_cIpAddr)
+	Return __viGUIGetIP($g_fc_hIpAddr)
+	;Return "raw:" & __viGUIGetIP($g_fc_hIpAddr)
 EndFunc   ;==>fcTab_GetIP
 
 
 
 Func fcTab_GetID()
-	Local $sId = __viGUIGetID($g_fc_cDevID, $g_fc_cIpAddr, "raw:")
-	$g_fc_bCommValid = Not ($sId = "")
-	Return $sId
+	__viGUIGetIDbg($g_fc_hDevID, $g_fc_hIpAddr, $g_fc_oDev, "g_fc_bCommValid") ;, "raw:") ???
+	;	;__ConsolePrintVars("__fcTab_GetID, ", "hIpAddr", GUICtrlRead($g_fc_hIpAddr), "oDev", $g_fc_oDev)
+	;	Local $sId = __viGUIGetID($g_fc_hDevID, $g_fc_hIpAddr, $g_fc_oDev, "g_fc_bCommValid", "raw:")
+	;	;$g_fc_bCommValid = Not ($sId = "")
+	;	Return $sId
 EndFunc   ;==>fcTab_GetID
 
 
 
 Func fcTab_FellOffline()
 	$g_fc_bCommValid = 0
-	__viGUISetID($g_fc_cDevID, "")
+	__viGUISetID($g_fc_hDevID, "")
 EndFunc   ;==>fcTab_FellOffline
 
 
 
 Func fcTab_ScanNetwork()
-	__viScanSubnet("192.168.0.0", $g_fc_cIpAddr, "Frequency Counter")
+	__viScanSubnet()
+	;__viScanSubnet("192.168.0.0", $g_fc_hIpAddr, "Frequency Counter")
 EndFunc   ;==>fcTab_ScanNetwork
 
 
@@ -643,11 +715,12 @@ EndFunc   ;==>fcTab_ScanNetwork
 ; task:		Take a screen shot of the Frequency Counter and save it to file
 Func __fc_ScreenShot($UX = 1, $ipAddr = fcTab_GetIP(), $sFile = GUICtrlRead($g_fc_cScreenShot))
 	GUICtrlSetData($g_fc_cScreenShot, __FileNameAutoIncrement($sFile))
-	Local $sCmds = _
-			'HCOPy:SDUMp:DATA:FORMat PNG' & @CRLF & _
-			'##HCOPy:SDUMp:DATA?' & @CRLF & _
-			''
-	__viScript($ipAddr, $sCmds, $sFile)
+	Local $aCmds[] = [ _
+			"flush", _
+			"HCOPy:SDUMp:DATA:FORMat PNG", _
+			"##HCOPy:SDUMp:DATA?'", _
+			""]
+	__viScript($ipAddr, $aCmds, $sFile)
 	Local $sR = __viFlush($ipAddr)
 	If $sR And $UX Then MsgBox($MB_ICONINFORMATION, "Success", "Screenshot successfully saved to: " & @CRLF & $sR)
 	Return $sR
@@ -693,13 +766,26 @@ Func __fc_SaveData($UX = 1, $sFile = GUICtrlRead($g_fc_cCaptureData))
 		Return SetError($hFile, 0, -1)
 	EndIf
 	FileWriteLine($hFile, "")
-	FileWriteLine($hFile, StringFormat("%16s: %37.18f", "Frequency", GUICtrlRead($g_fc_cFreq)))
-	FileWriteLine($hFile, StringFormat("%16s: %37.18f", "Mean", GUICtrlRead($g_fc_cMean)))
-	FileWriteLine($hFile, StringFormat("%16s: %37.18f", "StdDev", GUICtrlRead($g_fc_cStdDev)))
-	FileWriteLine($hFile, StringFormat("%16s: %37.18f", "Min", GUICtrlRead($g_fc_cMin)))
-	FileWriteLine($hFile, StringFormat("%16s: %37.18f", "Max", GUICtrlRead($g_fc_cMax)))
-	FileWriteLine($hFile, StringFormat("%16s: %37.18f", "Allan Deviation", GUICtrlRead($g_fc_cAllanDev)))
-	FileWriteLine($hFile, StringFormat("%16s: %37.18f", "Sample Count", GUICtrlRead($g_fc_cCount)))
+	Local $fMean = GUICtrlRead($g_fc_cMean), $fAdev = GUICtrlRead($g_fc_cAllanDev)
+	Local $aOut = [ _
+			"Frequency", GUICtrlRead($g_fc_cFreq), _
+			"Mean", $fMean, _
+			"StdDev", GUICtrlRead($g_fc_cStdDev), _
+			"Min", GUICtrlRead($g_fc_cMin), _
+			"Max", GUICtrlRead($g_fc_cMax), _
+			"Allan Deviation", $fAdev, _
+			"Stability (ppm)", $fAdev * 1000000 / $fMean, _
+			"Sample Count", GUICtrlRead($g_fc_cCount), _
+			'']
+	Local $i, $n = UBound($aOut) - 2, $w
+	For $i = 0 To $n Step 2
+		$w = _Max($w, StringLen($aOut[$i]))
+	Next
+	$w += 2
+	For $i = 0 To $n Step 2
+		FileWriteLine($hFile, StringFormat("%" & $w & "s: %37.18f", $aOut[$i], $aOut[$i + 1]))
+	Next
+
 	FileClose($hFile)
 	If $UX Then MsgBox($MB_ICONINFORMATION, $sTitle, "Current readings/statistics saved to" & @CRLF & @CRLF & $sFile, 5)
 	Return 1
@@ -725,12 +811,13 @@ Global $g_configFile
 
 
 Func fcTab_ConfigWrite()
-	__viSaveIP($g_fc_cIpAddr, $fcTab_ConfigSection)
+	;__ConsolePrintVars("fcTab_ConfigWrite, ", "g_fc_hIpAddr", GUICtrlRead($g_fc_hIpAddr))
+	__viSaveIP($g_fc_hIpAddr, $fcTab_ConfigSection)
 	IniWrite($g_configFile, $fcTab_ConfigSection, "CountRequired", GUICtrlRead($g_fc_cCaptureCount))                                    ; autocapture sample minimum count
 	IniWrite($g_configFile, $fcTab_ConfigSection, "RefreshInterval", GUICtrlRead($g_fc_cRefreshInterval))                               ; refresh interval
 	IniWrite($g_configFile, $fcTab_ConfigSection, "ScreenShotFile", GUICtrlRead($g_fc_cScreenShot))                                     ; screen shot file
 	IniWrite($g_configFile, $fcTab_ConfigSection, "CaptureDataFile", GUICtrlRead($g_fc_cCaptureData))                                   ; data shot file
-	IniWrite($g_configFile, $fcTab_ConfigSection, "CaptureInitialize", Number(GUICtrlRead($g_fc_cCaptureInitCheck) = $GUI_CHECKED))     ; init checkbox
+	__IniWriteGuiCheckbox($g_fc_cCaptureInitCheck, "CaptureInitialize", $fcTab_ConfigSection)                                           ; init checkbox
 EndFunc   ;==>fcTab_ConfigWrite
 
 
@@ -738,20 +825,14 @@ EndFunc   ;==>fcTab_ConfigWrite
 Func fcTab_ConfigRead()
 	If $g_configFile = "" Then Return
 	If Not FileExists($g_configFile) Then Return
-
-	__viLoadIP($g_fc_cIpAddr, $fcTab_ConfigSection)
-
+	__viLoadIP($g_fc_hIpAddr, $fcTab_ConfigSection)
 	GUICtrlSetData($g_fc_cCaptureCount, IniRead($g_configFile, $fcTab_ConfigSection, "CountRequired", GUICtrlRead($g_fc_cCaptureCount)))            ; autocapture sample minimum count
 	GUICtrlSetData($g_fc_cRefreshInterval, IniRead($g_configFile, $fcTab_ConfigSection, "RefreshInterval", GUICtrlRead($g_fc_cRefreshInterval)))    ; refresh interval
-
 	GUICtrlSetData($g_fc_cScreenShot, IniRead($g_configFile, $fcTab_ConfigSection, "ScreenShotFile", GUICtrlRead($g_fc_cScreenShot)))               ; screen shot file
 	GUICtrlSetData($g_fc_cCaptureData, IniRead($g_configFile, $fcTab_ConfigSection, "CaptureDataFile", GUICtrlRead($g_fc_cCaptureData)))            ; data shot file
+	__IniReadGuiCheckbox($g_fc_cCaptureInitCheck, "CaptureInitialize", $fcTab_ConfigSection)                                                        ; init checkbox
 
-	GUICtrlSetState($g_fc_cCaptureInitCheck, _
-			Number(IniRead($g_configFile, $fcTab_ConfigSection, "CaptureInitialize", Number(GUICtrlRead($g_fc_cCaptureInitCheck) = $GUI_CHECKED))) ? _
-			$GUI_CHECKED : $GUI_UNCHECKED)
-
-	fcTab_GetID()
+	fcTab_OnIpAddrOrRefresh()
 EndFunc   ;==>fcTab_ConfigRead
 
 

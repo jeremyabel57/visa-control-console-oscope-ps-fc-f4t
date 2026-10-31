@@ -1,11 +1,69 @@
 #cs
 
 
-add other instruments to the gui and then validate the visa functions
-  getid and other simple strings
-  download file
-  download picture / take screenshot
-  modbus
+debug __viGetIDbg
+  solved the issue with the excess traffic - that was a receive binary request when in raw socket mode.  this is now fixed
+  this routine still has issues, now everytime it is run it toggles the mode (vxi/raw) but does not appear to detect that the first mode was working
+
+
+debug tab pushes stuff on stack, but the last item on the stack does not appear to drop.
+  add a debug button that dumps oDev into the output window any time you want
+  add to the sPrintVar routine to detect if it is a stack, queue, or pQueue and print them as just a list of items (without head and tail pointers)
+
+when closing conditional script statement, there appears to be a pause - guessing a timeout as if it thinks there is a command running
+  for this, check the end of LoopExec to see what it does with a sCmd or sReq string that evaluates to a blank string.  If waitReply is true this might account for the pause
+
+
+add right click context menu to the control bar power buttons.  keep a setting of what to do on click.  options: toggle power, toggle twice with a 2 second delay inbetween (option to change the delay inbetween), continuous toggling with on time and off time numbers
+add right click option on chamber temperature settings with presets 70C, 25C, -5C, -40C
+
+
+
+
+add file browser tab for scope to transfer files to and from scope using visa,  ask ai to write it in autoit
+
+
+
+make each tab canvas able to pop out and become its own window
+- change from one view port to each tab having its own viewport
+- add a flag in the oCanvas to indicate if canvas is inside or outside the main window
+- adjust how WM_SIZE, WM_MOUSEWHEEL, WM_VSCROLL, WM_HSCROLL and other events affect the window
+  . hWnd will point to the outside window instead of hMainGui
+  . resize calculations will need to shift their margin to not include the tab enclosure
+- save all window positions in the ini file
+- key: click and drag tab selector tab outside of main window to pop out.
+- minimize window or drag and drop on main window to pop back in
+- if popped out then leave tab area shown in main window with a single button/message to click and pull it back in
+
+
+add master queue for a script that runs all instruments.  use simple id prefix for which instrument gets the visa command
+  dc - power supply
+  tc - thermal chamber
+  fc - frequency counter
+  sc - oscope
+  i.e.:  sc:visastring
+
+debug box needs debug - monitoring commands and results is not working
+	debug edit box to enter script/visa commands and a combo select box to select which item to send it to
+	another edit box to show the results, an execute button, save and load buttons for the edit field
+	have this debug box only use the main queue
+
+
+
+; todo
+;
+;
+;
+
+; next steps:
+; - see if you can have it allow the separate tabs to undock from the main window and become their own window
+; - add a dashboard tab that will have
+;   . chamber temperature and setpoint and on/off button
+;   . power supply voltages, on/off status (grayed out if off, colored if on), and up/down sequence buttons
+;   . oscope screen capture button that will have a minature of the picture shown in the dashboard after it is captured
+;
+
+
   all scripting commands possible - and create simple documentation for the scripting
 
 
@@ -22,17 +80,6 @@ finally, add manual test station scripts for i2c, spi, and clocks
 next steps 10/12/2026
 
 handle minimize - it caused the visa scan to fail
-
-	do until validated
-	while end validated
-
-	test if/then/else/end
-
-	finish integrating FC into gui
-	integrate DC PS into gui
-	integrate chamber into gui
-
-	validate everything
 
 	add settings/config tab where you can set variables - used for pn/sn/ipn/...
 	chamber temperature selections
@@ -82,36 +129,6 @@ on the scope
 
 
 
-
-; todo
-;
-; test additional vi script functions
-; PASSING read to file command in vi script - can be used for scope shots and other file transfers
-;   file upload function to visascpi
-;   write from file command to visa target as a command in vi script
-;
-; add a tab menu button on the title bar to switch between oscope view and other tabs
-; - control dashboard with power supply, chamber, and frequency counter - including showing current status
-; - profile page with input fields for IPN, SN, and other information as well as temperature ranges and test item names (clocks/i2c busses/...)
-;
-; add a small status section to the title bar
-; - chamber temperature (if available)
-; - power supply on/off
-; - test profile name (I2C, SPI, SMBus...)
-; - current test item name
-;
-
-; next steps:
-;   add prefixes to all functions and variable names so that the entire set of 4 instrument controls can be added together into one
-; main program.
-; - use a tab in the main window
-; - see if you can have it allow the separate tabs to undock from the main window and become their own window
-; - add a settings tab that will have all the paths and ip addresses in it, complete with a scan network and auto populate
-; - add a dashboard tab that will have
-;   . chamber temperature and setpoint and on/off button
-;   . power supply voltages, on/off status (grayed out if off, colored if on), and up/down sequence buttons
-;   . oscope screen capture button that will have a minature of the picture shown in the dashboard after it is captured
-;
 ;
 
 
@@ -127,7 +144,9 @@ on the scope
 #AutoIt3Wrapper_UseX64=y
 #AutoIt3Wrapper_Icon=mts.ico
 
-Global $g_hMainGui, $g_cTab, $g_hTab, $g_oMainCanvas
+Global $g_hMainGui, $g_cTab, $g_hTab
+Global $g_oMainCanvas = ObjCreate("Scripting.Dictionary")
+Global $g_controlBarHeight
 
 
 Global $g_configFile, $g_configSection                                                          ; config file variables
@@ -142,23 +161,19 @@ Opt("GUIOnEventMode", 1)                                                        
 
 OnAutoItExitRegister("MainExit")                ; register before any other exit functions so this one will be executed last
 
-#include "visascpi.au3" ; visa functions (must be included before most other include files
+#include "visascpi.au3" ; visa functions(must be included before most other include files
 #include "misc.au3" ; miscellaneous
 #include "myconstants.au3" ; character And other misc constants
 #include "winmgmt.au3" ; window manager functions
 #include "tableEdit.au3" ; 2D array editor
-
+#include "controlBar.au3" ; control bar below the main window For controlling Select visa devices
 
 
 
 #cs
 Local $oDev = "192.168.0.14"
 Local $sR = __viReqBl($oDev,"*OPC?",true)
-;__ConsoleWriteVar($oDev,", ","oDev")
-__ConsoleWriteVar(BinaryToString($sR),", ","Response")
 Local $sR = __viReqBl($oDev,"*IDN?",true,2000)
-;__ConsoleWriteVar($oDev,", ","oDev")
-__ConsoleWriteVar(BinaryToString($sR),", ","Response")
 
 Exit
 #ce
@@ -170,20 +185,14 @@ Exit
 
 Local $oDev = "192.168.0.16"
 Local $sR = __viReqBl($oDev,"*IDN?",true)
-;__ConsoleWriteVar($oDev,", ","oDev")
-__ConsoleWriteVar(BinaryToString($sR),", ","Response")
 
 Exit
 
 Local $oDev = "raw:192.168.0.25"
 Local $sR = __viReqBl($oDev,"*IDN?",true)
-__ConsoleWriteVar($oDev,", ","oDev")
-__ConsoleWriteVar(BinaryToString($sR),", ","Response")
 
 $oDev = "192.168.0.14"
 Local $sR = __viReqBl($oDev,"*IDN?",true)
-__ConsoleWriteVar($oDev,", ","oDev")
-__ConsoleWriteVar(BinaryToString($sR),", ","Response")
 
 Exit
 ; debug end
@@ -204,6 +213,7 @@ ConfigFileInit("mts")
 #include "tab_FrequencyCounter.au3" ; frequency counter tab
 #include "tab_DC_Power_Supply.au3" ; DC Power Supply tab
 #include "tab_Chamber.au3" ; thermal chamber tab
+#include "tab_debug.au3" ; visa / scpi debug tool
 
 
 CreateMainGUI()                                     ; create main gui window
@@ -217,14 +227,16 @@ Canvas_MainInit()                                   ; initialize the tab zoom fe
 winmgmt_Init()                                      ; initialize Tabs, Zoom, Scrollbars and more
 ProgressSet(80)
 
-oscopeTab_init()                                    ; initialize oscopeTab
+scTab_init()                                        ; initialize oscopeTab
 fcTab_init()                                        ; initialize fcTab
-dcpsTab_init()                                      ; initialize dcpsTab
-chamberTab_init()                                   ; initialize chamberTab
+dcTab_init()                                        ; initialize dcpsTab
+tcTab_init()                                        ; initialize chamberTab
+dbgTab_init()                                       ; initialize dbgTab
 ProgressSet(90)
 
 ConfigReadAll()                                     ; Load config
 ProgressSet(100)
+ControlBar_Init()                                   ; initialize the control bar
 ProgressOff()
 
 
@@ -274,12 +286,14 @@ Func Canvas_MainInit()
 	Local $aSize = WinGetClientSize($g_hMainGui)
 	Local $aDef[2] = [800, 600]
 	If Not IsArray($aSize) Then $aSize = $aDef
-	$g_oMainCanvas = __Canvas_Create(-1, $aSize[0], $aSize[1])
+	__Canvas_Create($g_oMainCanvas, -1, $aSize[0], $aSize[1])
 	$g_oMainCanvas.Item('hWnd') = $g_hMainGui
-	Local $aCtrls[1] = [ $g_hTab ]
+	Local $aCtrls[0], $n
+	If $g_oMainCanvas.Exists('aCtrls') Then $aCtrls = $g_oMainCanvas.Item('aCtrls')
+	$n = UBound($aCtrls)
+	ReDim $aCtrls[$n + 1]
+	$aCtrls[$n] = $g_hTab
 	$g_oMainCanvas.Item('aCtrls') = $aCtrls
-;ConsoleWrite(@CRLF & "Canvas_MainInit" & @CRLF)
-;__ConsolePrintVar("Canvas_MainInit","oMainCanvas",$g_oMainCanvas)
 	__Canvas_ZoomCatalog($g_oMainCanvas)
 EndFunc   ;==>Canvas_MainInit
 
@@ -289,20 +303,21 @@ EndFunc   ;==>Canvas_MainInit
 Func CreateMainGUI()
 	Local $V_WIDTH = 800
 	Local $V_HEIGHT = 600
+	$g_controlBarHeight = 20
 
 	$g_hMainGui = GUICreate("ManualTestStation", $V_WIDTH, $V_HEIGHT, -1, -1, _
 			BitOR($WS_MINIMIZEBOX, $WS_MAXIMIZEBOX, $WS_CAPTION, $WS_POPUP, $WS_SYSMENU, $WS_SIZEBOX))      ; main window
 
-	$g_cTab = GUICtrlCreateTab(0, 0, $V_WIDTH, $V_HEIGHT)                                                   ; Create the main Tab Control container
+	$g_cTab = GUICtrlCreateTab(0, 0, $V_WIDTH, $V_HEIGHT - $g_controlBarHeight)                             ; Create the main Tab Control container
 	GUICtrlSetResizing(-1, BitOR($GUI_DOCKTOP, $GUI_DOCKLEFT, $GUI_DOCKRIGHT, $GUI_DOCKBOTTOM))             ; resize with entire window
 	$g_hTab = GUICtrlGetHandle($g_cTab)
 
-	TabCreateCanvas("Oscilloscope", "oscopeTab_CanvasGuiCreate", "oscopeTab_TabGuiCreate", _                ; Tab 0
+	TabCreateCanvas("Oscilloscope", "scTab_CanvasGuiCreate", "scTab_TabGuiCreate", _                        ; Tab 0
 			$CANVASZOOMTYPE_MIN)
 
-	TabCreateCanvas("DC Power Supply", "dcpsTab_GuiCreate")                                                 ; Tab 1
+	TabCreateCanvas("Chamber", "tcTab_GuiCreate")                                                           ; Tab 1
 
-	TabCreateCanvas("Chamber", "chamberTab_GuiCreate")                                                      ; Tab 2
+	TabCreateCanvas("DC Power Supply", "dcTab_GuiCreate")                                                   ; Tab 2
 
 	TabCreateCanvas("Frequency Counter", "fcTab_GuiCreate")                                                 ; Tab 3
 
@@ -314,16 +329,15 @@ Func CreateMainGUI()
 
 	GUICtrlCreateTabItem("Clocks")                                                                          ; Tab 7
 
-	;GUICtrlSetState(-1, $GUI_SHOW)                                                                          ; set this as initial tab to show so that the tab 0 buttons do not initially appear
+	TabCreateCanvas("VISA/SCPI Debug", "dbgTab_GuiCreate", "", $CANVASZOOMTYPE_MIN)                         ; Tab 8
+
 	GUICtrlCreateTabItem("")                                                                                ; Close the tab item definition structure
 
+	CreateControlBar(0, $V_HEIGHT - $g_controlBarHeight, $V_WIDTH, $g_controlBarHeight)                     ; add aux control bar to bottom
 
 	GUISetOnEvent($GUI_EVENT_CLOSE, "CloseApp", $g_hMainGui)                                                ; Register the close button action for the main layout frame
 
 EndFunc   ;==>CreateMainGUI
-
-
-
 
 
 
@@ -384,10 +398,12 @@ EndFunc   ;==>ConfigSave
 ;			Save config to config file
 Func ConfigWriteAll()
 	ConfigWrite()
-	oscopeTab_ConfigWrite()
-	dcpsTab_ConfigWrite()
-	chamberTab_ConfigWrite()
+	scTab_ConfigWrite()
+	dcTab_ConfigWrite()
+	tcTab_ConfigWrite()
 	fcTab_ConfigWrite()
+	dbgTab_ConfigWrite()
+	cb_ConfigWrite()
 EndFunc   ;==>ConfigWriteAll
 Func ConfigWrite()
 	Local $aPos = WinGetPos($g_hMainGui)                                                    ; window position
@@ -399,7 +415,7 @@ Func ConfigWrite()
 			IniWrite($g_configFile, $g_configSection, "wh", $aPos[3])
 		EndIf
 	EndIf
-	IniWrite($g_configFile, $g_configSection, "ws", $g_oMainCanvas.Item('fzScale'))      ; main window zoom scale
+	IniWrite($g_configFile, $g_configSection, "ws", $g_oMainCanvas.Item('fzScale'))         ; main window zoom scale
 
 	IniWrite($g_configFile, $g_configSection, "vpx", $g_iViewportX)                         ; viewport position
 	IniWrite($g_configFile, $g_configSection, "vpy", $g_iViewportY)
@@ -430,16 +446,7 @@ EndFunc   ;==>ConfigWrite
 
 
 Func Instruments_ConfigWrite()
-	If Not IsArray($g_aFoundVisaDevices) Then Return
-	If UBound($g_aFoundVisaDevices, 0) <> 2 Then Return
-	Local $i, $n = UBound($g_aFoundVisaDevices, 1) - 1
-	IniWrite($g_configFile, $g_instConfigSection, "n", $n)                                                  ; number of items found minus one
-	For $i = 0 To $n
-		IniWrite($g_configFile, $g_instConfigSection, "IP" & $i, $g_aFoundVisaDevices[$i][0])               ; IP address
-		IniWrite($g_configFile, $g_instConfigSection, "Adr" & $i, $g_aFoundVisaDevices[$i][1])              ; full address
-		IniWrite($g_configFile, $g_instConfigSection, "IDN" & $i, $g_aFoundVisaDevices[$i][2])              ; IDN string
-		IniWrite($g_configFile, $g_instConfigSection, "Typ" & $i, $g_aFoundVisaDevices[$i][3])              ; classification
-	Next
+	__IniWriteArray($g_aVisaDevices, "i", $g_instConfigSection)
 EndFunc   ;==>Instruments_ConfigWrite
 
 
@@ -474,10 +481,13 @@ EndFunc   ;==>ConfigOpen
 ;		main configread
 Func ConfigReadAll()
 	ConfigRead()
-	oscopeTab_ConfigRead()
-	dcpsTab_ConfigRead()
-	chamberTab_ConfigRead()
+	scTab_ConfigRead()
+	dcTab_ConfigRead()
+	tcTab_ConfigRead()
 	fcTab_ConfigRead()
+	dbgTab_ConfigRead()
+	__viScanDistribute()
+	cb_ConfigRead()
 EndFunc   ;==>ConfigReadAll
 Func ConfigRead()
 	If $g_configFile = "" Then Return
@@ -534,18 +544,7 @@ EndFunc   ;==>ConfigRead
 
 
 Func Instruments_ConfigRead()
-	Local $n = IniRead($g_configFile, $g_instConfigSection, "n", -1)                            ; number of items found minus one
-	If $n < 0 Then Return
-	Local $i, $j = 0, $a[$n + 1][4]
-	For $i = 0 To $n
-		$a[$j][0] = IniRead($g_configFile, $g_instConfigSection, "IP" & $i, "")                 ; IP address
-		$a[$j][1] = IniRead($g_configFile, $g_instConfigSection, "Adr" & $i, "")                ; full address
-		$a[$j][2] = IniRead($g_configFile, $g_instConfigSection, "IDN" & $i, "")                ; IDN string
-		$a[$j][3] = IniRead($g_configFile, $g_instConfigSection, "Typ" & $i, "")                ; classification
-		If $a[$j][0] <> "" Then $j += 1
-	Next
-	If $j <= $n Then ReDim $a[$j][4]
-	If $j > 0 Then $g_aFoundVisaDevices = $a
+	$g_aVisaDevices = __IniReadArray($g_aVisaDevices, "i", $g_instConfigSection)
 EndFunc   ;==>Instruments_ConfigRead
 
 

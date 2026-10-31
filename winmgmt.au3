@@ -2,18 +2,18 @@
 
 
 #include "mydebug.au3"
+#include "myconstants.au3"
 #include "datatypes.au3"
 
 
 
 #include <GuiTab.au3>
-
 #include <ProgressConstants.au3>
+#include <EditConstants.au3>
 #include <GuiEdit.au3>
 #include <GuiComboBox.au3>
 #include <ButtonConstants.au3>
 #include <ComboConstants.au3>
-#include <EditConstants.au3>
 #include <MsgBoxConstants.au3>
 
 #include <StaticConstants.au3>
@@ -21,11 +21,6 @@
 #include <AutoItConstants.au3>
 #include <StructureConstants.au3>
 #include <GUIConstantsEx.au3>
-
-#include <WinAPISys.au3>
-#include <WinAPIGdi.au3>
-#include <WinAPI.au3>
-#include <WinAPISysWin.au3>
 
 #include <ScrollBarConstants.au3>
 #include <ScrollBarsConstants.au3>
@@ -36,11 +31,21 @@
 
 #include <Math.au3>
 
+#include <WinAPISys.au3>
+#include <WinAPIGdi.au3>
+#include <WinAPI.au3>
+#include <WinAPISysWin.au3>
+#include <SendMessage.au3> ; Required For _SendMessage
+
+
 #include "webview2tab.au3"
+#include "winfuncs.au3"
 
 
 
 
+
+Global $g_oGuiPics = ObjCreate("Scripting.Dictionary")
 Global $g_oTabExec = ObjCreate("Scripting.Dictionary")
 Global $g_cTab, $g_hTab, $g_oMainCanvas, $g_oCanvas
 
@@ -50,108 +55,24 @@ Global Const $CANVASZOOMTYPE_FREE = 1
 
 
 
+
 Func winmgmt_Init()                                                                                         ; Call this function after creating and showing the main gui to initialize
-	_GUIRegisterMsg($WM_SIZE, "__Canvas_WM_SIZE")
-	_GUIRegisterMsg($WM_VSCROLL, "__Canvas_WM_VSCROLL_HANDLER")
-	_GUIRegisterMsg($WM_HSCROLL, "__Canvas_WM_HSCROLL_HANDLER")
-	_GUIRegisterMsg($WM_MOUSEWHEEL, "__Canvas_WM_MOUSEWHEEL")
-	_GUIRegisterMsg($WM_NOTIFY, "__Canvas_BlockTabNativeToggle_Handler")
+	;$g_oGuiPics = ObjCreate("Scripting.Dictionary")
+	;$g_oTabExec = ObjCreate("Scripting.Dictionary")
+
+	_GUIRegisterMsg($WM_SIZE, "__Canvas_WM_SIZE")                   ; window resized
+	_GUIRegisterMsg($WM_VSCROLL, "__Canvas_WM_VSCROLL_HANDLER")     ; vertical scroll bar activity
+	_GUIRegisterMsg($WM_HSCROLL, "__Canvas_WM_HSCROLL_HANDLER")     ; horizontal scroll bar activity
+	_GUIRegisterMsg($WM_MOUSEWHEEL, "__Canvas_WM_MOUSEWHEEL")       ; mouse wheel activity
+	;_GUIRegisterMsg($WM_NOTIFY, "__Canvas_BlockTabNativeToggle_Handler")   	; Tab control selection changed
+	;_GUIRegisterMsg(0x0014, "__Canvas_WM_ERASEBKGND_Handler")       ; 0x0014 = $WM_ERASEBKGND ; Subclass the picture control to handle its messages directly
 
 	GUICtrlSetOnEvent($g_cTab, "OnTabChange")                                                               ; register tab change event to function handler in winmgmt.au3
 	OnTabChange()
 
 	LoopRegister("__WinTitleNoteTrack")
+	LoopRegister("MailboxVarLoop")
 EndFunc   ;==>winmgmt_Init
-
-
-
-
-; -------------------------------------------------------------------------------------------------------------------------
-; -------------------------------------------------------------------------------------------------------------------------
-; -------------------------------------------------------------------------------------------------------------------------
-; register functions to be executed inside the main loop
-;
-
-
-Global $g_oLoopExec = ObjCreate("Scripting.Dictionary")
-
-
-Func LoopRegister($sFunction)               ; register your function to run in main loop
-	$g_oLoopExec.Item($sFunction) = 1
-EndFunc   ;==>LoopRegister
-
-Func LoopUnregister($sFunction)             ; unregister your function from the main loop
-	$g_oLoopExec.Remove($sFunction)
-EndFunc   ;==>LoopUnregister
-
-
-Func LoopExec()                             ; execute this in the main loop to run registered functions
-	Local $sKey
-	For $sKey In $g_oLoopExec
-		Call($sKey)
-	Next
-EndFunc   ;==>LoopExec
-
-
-
-; -------------------------------------------------------------------------------------------------------------------------
-; -------------------------------------------------------------------------------------------------------------------------
-; -------------------------------------------------------------------------------------------------------------------------
-; _GUIRegisterMsgs - a wraper for GUIRegisterMsgs
-;   this will allow registering multiple handler functions to a given gui message event
-;
-; _GUIRegisterMsgs($iMsg,$sFunction)			to register your function
-; _GUIRegisterMsgs_remove($iMsg,$sFunction)		to unregister your function
-;
-
-
-
-Global $_GUIRegisterMsg_Handlers = ObjCreate("Scripting.Dictionary")
-
-
-
-;			_GUIRegisterMsg
-; task:		this GUIRegisterMsg wrapper allows registering multiple functions to any given gui window event
-; in:		$iMessage = event ID
-;			$sFunction = autoit function to call
-; action:	adds $sFunction to the array of handlers for $iMessage event
-Func _GUIRegisterMsg($iMessage, $sFunction)
-	Local $oHandle
-	If Not $_GUIRegisterMsg_Handlers.Exists($iMessage) Then
-		$oHandle = ObjCreate("Scripting.Dictionary")
-		$_GUIRegisterMsg_Handlers.Item($iMessage) = $oHandle
-		GUIRegisterMsg($iMessage, "_GUIRegisterMsg_Handle")
-	Else
-		$oHandle = $_GUIRegisterMsg_Handlers.Item($iMessage)
-	EndIf
-	$oHandle.Item($sFunction) = 1
-EndFunc   ;==>_GUIRegisterMsg
-
-; task:		remove $sFunction from the list of registered event handlers
-Func _GUIUnregisterMsg($iMessage, $sFunction)
-	If Not $_GUIRegisterMsg_Handlers.Exists($iMessage) Then Return
-	Local $oHandle = $_GUIRegisterMsg_Handlers.Item($iMessage)
-	If Not $oHandle.Exists($sFunction) Then Return
-	$oHandle.Remove($sFunction)
-	If $oHandle.Count = 0 Then
-		$_GUIRegisterMsg_Handlers.Remove($iMessage)
-		GUIRegisterMsg($iMessage, "")
-	EndIf
-EndFunc   ;==>_GUIUnregisterMsg
-
-
-; universal message handler that executes every custom function registered to a given gui message
-Func _GUIRegisterMsg_Handle($hWnd, $iMsg, $wParam, $lParam)
-	Local $oHandle = $_GUIRegisterMsg_Handlers.Item($iMsg)
-	If Not IsObj($oHandle) Then Return $GUI_RUNDEFMSG
-	If ObjName($oHandle) <> "Dictionary" Then Return $GUI_RUNDEFMSG
-	Local $sKey, $vRet
-	For $sKey In $oHandle
-		$vRet = Call($sKey, $hWnd, $iMsg, $wParam, $lParam)
-		;If $vRet <> '' And $vRet <> $GUI_RUNDEFMSG Then Return $vRet
-	Next
-	Return $GUI_RUNDEFMSG
-EndFunc   ;==>_GUIRegisterMsg_Handle
 
 
 
@@ -166,7 +87,7 @@ Global $g_hMainGui                                                              
 
 
 Func TabRegister($sFunction)                    ; register your function to run when an event occurs in the gui tab control
-	$g_oTabExec.Item($sFunction) = 1
+	$g_oTabExec.Item(String($sFunction)) = 1
 EndFunc   ;==>TabRegister
 
 Func TabUnregister($sFunction)                  ; unregister your function to run when gui tab control receives an event
@@ -175,15 +96,15 @@ EndFunc   ;==>TabUnregister
 
 
 Func OnTabChange()                              ; this executes on change of tab gui control
-	__LockRepaint()
+	__WinLockRepaint()
 	Local $iActiveTab = GUICtrlRead($g_cTab)
 	Local $sActiveTab = _GUICtrlTab_GetItemText($g_hTab, $iActiveTab)
 	__Canvas_OnTabChange($iActiveTab)
 	For $sKey In $g_oTabExec
-		;$g_oTabExec.Item($sActiveTab)
+		;$g_oTabExec.Item(String($sActiveTab))
 		Call($sKey, $iActiveTab, $sActiveTab, $g_hMainGui, $g_hTab)
 	Next
-	__UnlockRepaint()
+	__WinUnlockRepaint()
 EndFunc   ;==>OnTabChange
 
 
@@ -235,7 +156,8 @@ Func TabCreateCanvas($sTabName, $fCanvasGuiCreate = '', $fTabGuiCreate = '', $iT
 	Local $iTabIdx = _GUICtrlTab_FindTab($g_hTab, $sTabName)                                ; get the tab index number
 	Local $iW = $g_iViewportW
 	Local $iH = $g_iViewportH
-	Local $oCanvas = __Canvas_Create($iTabIdx, $iW, $iH, $iType, $cTab)                     ; create and add the canvas to the aCanvas array
+	Local $oCanvas = ''
+	__Canvas_Create($oCanvas, $iTabIdx, $iW, $iH, $iType, $cTab)                            ; create and add the canvas to the aCanvas array
 
 	If $fTabGuiCreate <> '' Then Call($fTabGuiCreate, $iTabIdx, $oCanvas)                   ; call client function to populate the tab
 	Local $hCanvas = GUICreate("Canvas", $iW, $iH, 0, 0, $WS_CHILD, -1, $g_hViewport)       ; create the canvas for the tab
@@ -263,8 +185,8 @@ EndFunc   ;==>TabCreateCanvas
 
 
 
-Func __Canvas_Create($iTabIdx = -1, $iW = 0, $iH = 0, $iType = $CANVASZOOMTYPE_FREE, $cTab = -1)
-	Local $oCanvas = ObjCreate("Scripting.Dictionary")
+Func __Canvas_Create(ByRef $oCanvas, $iTabIdx = -1, $iW = 0, $iH = 0, $iType = $CANVASZOOMTYPE_FREE, $cTab = -1)
+	If Not __IsDictionary($oCanvas) Then $oCanvas = ObjCreate("Scripting.Dictionary")
 	$oCanvas.Item('iW') = $iW
 	$oCanvas.Item('iH') = $iH
 	$oCanvas.Item('iTabIdx') = $iTabIdx
@@ -347,7 +269,8 @@ Func __Canvas_OnTabChange($iActiveTab)
 
 	__Canvas_WM_SIZE($g_hMainGui, 0, 0, 0)
 	_WinAPI_RedrawWindow($g_hMainGui, 0, 0, _
-			BitOR($RDW_INVALIDATE, $RDW_UPDATENOW, $RDW_ALLCHILDREN))
+			BitOR($RDW_UPDATENOW, $RDW_ALLCHILDREN))
+	;BitOR($RDW_INVALIDATE, $RDW_UPDATENOW, $RDW_ALLCHILDREN))
 
 EndFunc   ;==>__Canvas_OnTabChange
 
@@ -380,12 +303,13 @@ EndFunc   ;==>__API_ControlSetVisible
 ; ---------------------------------------------------------------------------
 ; Canvas resize handler
 
+Global $g_controlBarHeight
 
 Func __Canvas_WM_SIZE($hWnd, $Msg, $wParam, $lParam)
 	If $hWnd <> $g_hMainGui Then Return $GUI_RUNDEFMSG
 
 	Local $aSize = WinGetClientSize($g_hMainGui)                                                            ; 1. Keep parent tab boundaries completely synchronized with physical window scaling adjustments
-	GUICtrlSetPos($g_cTab, 0, 0, $aSize[0], $aSize[1])
+	GUICtrlSetPos($g_cTab, 0, 0, $aSize[0], $aSize[1] - $g_controlBarHeight)
 	If $g_hCanvas = 0 Then Return $GUI_RUNDEFMSG                                                            ; if no Canvas child visible then do nothing more
 
 	Local $aPageRect = _GUICtrlTab_GetDisplayRect($g_hTab)                                                  ; 2. Recalculate working viewport bounds inside the scaled tab components
@@ -396,8 +320,6 @@ Func __Canvas_WM_SIZE($hWnd, $Msg, $wParam, $lParam)
 
 	Local $iSBW = _WinAPI_GetSystemMetrics($SM_CXVSCROLL)                                                   ; add buffer for vertical scroll bar
 	Local $iSBH = _WinAPI_GetSystemMetrics($SM_CYHSCROLL)                                                   ; add buffer for horizontal scroll bar
-
-	;ConsoleWrite(@CRLF)
 
 	Local $zType = $CANVASZOOMTYPE_FREE                                                                     ; zoomType:  if viewport smaller than canvas, then scrollbars control viewport of larger canvas
 	If __IsDictionary($g_oCanvas) Then $zType = $g_oCanvas.Item('zoomType')                                 ; zoomType MIN = if viewport larger than canvas then scale the canvas to match viewport.  otherwise leave canvas scale alone
@@ -412,13 +334,6 @@ Func __Canvas_WM_SIZE($hWnd, $Msg, $wParam, $lParam)
 	__Canvas_CheckScrollPos($iSY, $iPH, $iMinH, $iMaxH, $g_iTabH, $g_iViewportH, $iTabMinH, $zType, $iSBH)                      ; adjust to new viewport dimensions, assuming we have horizontal scroll bar
 	__Canvas_CheckScrollPos($iSX, $iPW, $iMinW, $iMaxW, $g_iTabW, $g_iViewportW, $iTabMinW, $zType, ($iMaxH = 0) ? 0 : $iSBW)   ; adjust to new viewport dimensions, knowing we have or do not have vertical scroll bar
 	If $iMaxW = 0 Then __Canvas_CheckScrollPos($iSY, $iPH, $iMinH, $iMaxH, $g_iTabH, $g_iViewportH, $iTabMinH, $zType, 0)       ; readjust to new viewport dimensions, knowing if we have horizontal scroll bar
-	;__Canvas_CheckScrollPos($iSX, $iPW, $iMinW, $iMaxW, $g_iTabW, $g_iViewportW, $iTabMinW, $zType, ($iMaxH = 0) ? 0 : $iSBW)  ; adjust to new viewport dimensions, knowing we have or do not have vertical scroll bar
-
-
-	;__ConsolePrintVar("__Canvas_WM_SIZE", "iSX", $iSX, "iPW", $iPW, "iMinW", $iMinW, "iMaxW", $iMaxW, "g_iTabW", $g_iTabW, "g_iViewportW", $g_iViewportW, "iTabMinW", $iTabMinW)
-	;__ConsolePrintVar("__Canvas_WM_SIZE", "iSY", $iSY, "iPH", $iPH, "iMinH", $iMinH, "iMaxH", $iMaxH, "g_iTabH", $g_iTabH, "g_iViewportH", $g_iViewportH, "iTabMinH", $iTabMinH)
-	;__ConsolePrintVar("__Canvas_WM_SIZE", "iTabW", $iTabW, "iTabH", $iTabH)
-
 
 	If $iTabW <> $g_iTabW Or $iTabH <> $g_iTabH Then
 		_WinAPI_SetWindowPos($g_hCanvas, 0, -$iSX, -$iSY, $g_iTabW, $g_iTabH, _                             ; scroll/move canvas to new position
@@ -439,10 +354,6 @@ Func __Canvas_WM_SIZE($hWnd, $Msg, $wParam, $lParam)
 			BitOR($SWP_NOREDRAW, $SWP_NOZORDER, $SWP_NOACTIVATE))                                           ; SWP_NOREDRAW (0x0008) = no repainting.  SWP_NOZORDER (0x0004) = don't change z order.  SWP_NOACTIVE (0x0010) = do not activate or change focus to this window pane
 	__API_UpdateScrollbarMetrics($g_hViewport, $SB_HORZ, $iMinH, $iMaxW, $iPW, Abs($iSX))                   ; update the horizontal scrollbar
 	__API_UpdateScrollbarMetrics($g_hViewport, $SB_VERT, $iMinH, $iMaxH, $iPH, Abs($iSY))                   ; update the vertical scrollbar
-
-	;ConsoleWrite(@CRLF)
-	;__ConsolePrintVar("WM_SIZE", "iScrollX", $iSX, "iScrollY", $iSY, "iPageW", $iPW, "iPageH", $iPH, "iMinW", $iMinW, "iMinH", $iMinH, _
-	;		"iMaxW", $iMaxW, "iMaxH", $iMaxH, "iTabW", $g_iTabW, "iTabH", $g_iTabH, "iViewportW", $g_iViewportW, "iViewportH", $g_iViewportH)
 
 	If __IsDictionary($g_oCanvas) Then                                                                      ; if available then
 		$g_oCanvas.Item('iSX') = $iSX                                                                       ;   update canvas scroll bar positions
@@ -473,11 +384,6 @@ EndFunc   ;==>__Canvas_GetScrollPos
 
 
 Func __Canvas_CheckScrollPos(ByRef $iPos, ByRef $iPage, ByRef $iMin, ByRef $iMax, ByRef $iTabLen, $iViewLen, $iTabMin, $iType, $iSBlen = 0)
-	;ConsoleWrite(@CRLF & "scrollpos [ iPos, iPage, iMin, iMax, iTabLen, iViewLen, iTabMin, iType, iSBlen ]" & @CRLF)
-	;Local $a[] = [$iPos, $iPage, $iMin, $iMax, $iTabLen, $iViewLen, $iTabMin, $iType, $iSBlen]
-	;__ConsolePrintVar("", "scrollpos", $a)
-
-
 	Local $iViewLenSB = Int($iViewLen) - Int($iSBlen)
 	Local $iPosMin, $iPosMax                                        ; make sure scroll bar metrics are in bounds to keep canvas and viewport over each other
 	If $iTabLen < $iViewLenSB Then                                  ; if tab is smaller than viewport then
@@ -493,20 +399,12 @@ Func __Canvas_CheckScrollPos(ByRef $iPos, ByRef $iPage, ByRef $iMin, ByRef $iMax
 			Else                                                    ;     else we have reached smallest canvas scale, now viewport will become smaller than canvas
 				$iTabLen = $iTabMin                                 ;       set iTabLen to its minimum and this will be processed on the next If $iTabLen >= $iViewLenSB statement
 			EndIf
-
-			;ConsoleWrite(@CRLF & "scrollpos [ iPos, iPage, iMin, iMax, iTabLen, iViewLen, iTabMin, iType, iSBlen ]" & @CRLF)
-			;Local $b = [$iPos, $iPage, $iMin, $iMax, $iTabLen, $iViewLen, $iTabMin, $iType, $iSBlen]
-			;__ConsolePrintVar("", "scrollpos", $b)
 		Else                                                        ;   else scrollbars control position of canvas inside the dimensions of the viewport
 			$iPosMin = -$iViewLenSB ; + $iSBlen ; $iTabLen - $iViewLenSB                       ;     tab to viewport offset range is delta to 0
 			$iPosMax = 0                                            ;     ;
 			$iPage = $iTabLen                                       ;     scrollbar page is the smaller dimension
 			$iMin = 0                                               ;     scrollbar min is 0
 			$iMax = $iViewLenSB                                     ;     scrollbar max is the larger dimension between canvas and viewport
-
-			;ConsoleWrite(@CRLF & "scrollpos [ iPos, iPage, iMin, iMax, iTabLen, iViewLen, iTabMin, iType, iSBlen ]" & @CRLF)
-			;Local $b = [$iPos, $iPage, $iMin, $iMax, $iTabLen, $iViewLen, $iTabMin, $iType, $iSBlen]
-			;__ConsolePrintVar("", "scrollpos", $b)
 		EndIf                                                       ;   end if
 	EndIf
 	If $iTabLen >= $iViewLenSB Then                                 ; else tab is equal to or larger than viewport
@@ -522,23 +420,10 @@ Func __Canvas_CheckScrollPos(ByRef $iPos, ByRef $iPage, ByRef $iMin, ByRef $iMax
 			$iMax = 0
 			$iPosMax = 0
 		EndIf
-
-		;ConsoleWrite(@CRLF & "scrollpos [ iPos, iPage, iMin, iMax, iTabLen, iViewLen, iTabMin, iType, iSBlen ]" & @CRLF)
-		;Local $b = [$iPos, $iPage, $iMin, $iMax, $iTabLen, $iViewLen, $iTabMin, $iType, $iSBlen]
-		;__ConsolePrintVar("", "scrollpos", $b)
 	EndIf                                                           ; end if
-
-	;Local $e[] = [$iPosMin, $iPosMax, $iPos]
-	;__ConsolePrintVar("scrollpos", "iPosMin, iPosMax, iPos", $e)
 
 	If $iPos < $iPosMin Then $iPos = $iPosMin                       ; keep position within bounds
 	If $iPos > $iPosMax Then $iPos = $iPosMax                       ;
-
-	;$iTabLen -= $iSBlen
-	;ConsoleWrite(@CRLF)
-	;__ConsolePrintVar("__Canvas_CheckScrollPos", "iPos", $iPos, "iPage", $iPage, "iMin", $iMin, "iMax", $iMax, _
-	;	"iTabLen", $iTabLen, "iViewLen", $iViewLen, "iTabMin", $iTabMin, "iType", $iType)
-
 EndFunc   ;==>__Canvas_CheckScrollPos
 
 
@@ -713,7 +598,7 @@ Func __Canvas_ZoomCatalog($oCanvas)                                             
 	Local $iColumn = -2                                                         ; column and row to pull data from $aChildren or $aList
 	Local $aChildren = $oCanvas.Item('aCtrls')
 	$oCanvas.Remove('bZoomNeedCataloged')
-	;__ConsolePrintVar("zoomCatalog","aChildren",$aChildren,"oCanvas",$oCanvas)
+	;__ConsolePrintVars("zoomCatalog, ","aChildren",$aChildren,"oCanvas",$oCanvas)
 	If IsArray($aChildren) Then
 		If UBound($aChildren, 0) = 2 Then
 			Local $iColCount = UBound($aChildren, 2)
@@ -766,39 +651,6 @@ EndFunc   ;==>__Canvas_ZoomCatalog
 
 
 
-Func __API_ControlGetFontSize($hControl)
-	Local $hFont = _SendMessage($hControl, $WM_GETFONT, 0, 0)                               ; 1. Request the HFONT handle from the control
-	If $hFont = 0 Then $hFont = _WinAPI_GetStockObject($DEFAULT_GUI_FONT)                   ;    If the control returns 0, it means it is using the default system GUI font
-	Local $tLogFont = DllStructCreate($tagLOGFONT)                                          ; 2. Create the blank structure to store font data
-	_WinAPI_GetObject($hFont, DllStructGetSize($tLogFont), DllStructGetPtr($tLogFont))      ; 3. PASS ALL 3 REQUIRED ARGUMENTS: (Handle, Size of Buffer, Pointer to Buffer)
-	If @error Then Return SetError(1, 0, 9)                                                 ;    if error then return default font size 9
-	Local $hDC = _WinAPI_GetDC($hControl)                                                   ; 4. Get the Screen Device Context (DC) to calculate the current DPI / Scale
-	Local $iLogPixelsY = _WinAPI_GetDeviceCaps($hDC, $LOGPIXELSY)                           ; Usually 96 on 100% scaling
-	_WinAPI_ReleaseDC($hControl, $hDC)
-	Return Round((Abs(DllStructGetData($tLogFont, "Height")) * 72) / $iLogPixelsY)          ; Formula conversion: Points = (Logical Height * 72) / DPI  (Note: Height is often negative in Win32 to signify character em-height);
-EndFunc   ;==>__API_ControlGetFontSize
-
-
-
-Func __API_ControlGetPos($hControl, $hParent = 0)
-	If $hParent = 0 Then $hParent = _WinAPI_GetParent($hControl)
-	Local $a[4] = [0, 0, 0, 0]
-	Local $tRect = _WinAPI_GetWindowRect($hControl)                         ; 1. Get the control's absolute screen coordinates
-	If @error Then Return SetError(1, 0, $a)
-	Local $iLeft = DllStructGetData($tRect, "Left")                         ; Extract the structure points
-	Local $iTop = DllStructGetData($tRect, "Top")
-	Local $iRight = DllStructGetData($tRect, "Right")
-	Local $iBottom = DllStructGetData($tRect, "Bottom")
-	Local $tPoint = _WinAPI_CreatePoint($iLeft, $iTop)                      ; 2. Convert the Top-Left screen point to Parent-relative coordinates
-	_WinAPI_ScreenToClient($hParent, $tPoint)
-	Local $iX = DllStructGetData($tPoint, "X")
-	Local $iY = DllStructGetData($tPoint, "Y")
-	Local $aPos[4] = [$iX, $iY, $iRight - $iLeft, $iBottom - $iTop]         ; Return array matching ControlGetPos format: [X, Y, Width, Height]
-	Return $aPos
-EndFunc   ;==>__API_ControlGetPos
-
-
-
 Func __Canvas_AdjZoom($oCanvas, $fAdj = 0, $UX = False)
 	If Not __IsDictionary($oCanvas) Then Return 0
 	Local $fZoom = $oCanvas.Item('fzScale')
@@ -813,10 +665,10 @@ EndFunc   ;==>__Canvas_AdjZoom
 Func __Canvas_SetZoom($oCanvas, $fNewScale = "", $UX = False)
 	If Not __IsDictionary($oCanvas) Then Return 0
 	If __Canvas_IsWebView($oCanvas) Then Return 0
-	;__ConsolePrintVar("__Canvas_SetZoom", 'fNewScale', $fNewScale, 'oCanvas width', $oCanvas.Item('iW'))
+	;__ConsolePrintVars("__Canvas_SetZoom, ", 'fNewScale', $fNewScale, 'oCanvas width', $oCanvas.Item('iW'))
 	If Number($fNewScale) = 0 Then $fNewScale = 1.0                         ; if $fNewScale is invalid then reset to 1.0
 	Local $aCtrls = $oCanvas.Item('aCtrls')                                 ; get the gui control elements array from the canvas object
-	;__ConsolePrintVar("__Canvas_SetZoom", "aCtrls", $aCtrls)
+	;__ConsolePrintVars("__Canvas_SetZoom, ", "aCtrls", $aCtrls)
 	If Not IsArray($aCtrls) Then Return 0                                   ; must be array
 	If UBound($aCtrls, 0) <> 2 Then Return 0                                ; 2D
 	If UBound($aCtrls, 2) < 6 Then Return 0                                 ; at least 6 columns
@@ -836,9 +688,7 @@ Func __Canvas_SetZoom($oCanvas, $fNewScale = "", $UX = False)
 	Local $aPos, $hWnd
 
 	; resize the canvas and its elements
-	GUISetState(@SW_LOCK, $hCanvas)                                         ; prevent windows from repainting or processing changes until we are done with all changes
-	;__LockRepaint($hCanvas)                                                ; prevent windows from repainting or processing changes until we are done with all changes
-	;	$aPos = WinGetPos($g_hMainGui)                              		; retain old position of main window
+	__WinLockRepaint($hCanvas)                                              ; prevent windows from repainting or processing changes until we are done with all changes
 	If $bCanvas Then
 		$aPos = __API_ControlGetPos($hCanvas)                               ; retain the old position of the canvas
 		$iX = $aPos[0]
@@ -868,11 +718,7 @@ Func __Canvas_SetZoom($oCanvas, $fNewScale = "", $UX = False)
 		EndIf
 	Next
 
-	;__UnlockRepaint($hCanvas)
-	GUISetState(@SW_UNLOCK, $hCanvas)                                       ; release canvas lock so windows can repaint it
-	__Canvas_WM_SIZE($g_hMainGui, 0, 0, 0)                                  ; recalculate the scroll bars for the new canvas size
-	_WinAPI_RedrawWindow($hCanvas, 0, 0, _                                  ; request windows to redraw/repaint
-			BitOR($RDW_INVALIDATE, $RDW_UPDATENOW, $RDW_ALLCHILDREN))
+	__WinUnlockRepaint($hCanvas)                                            ; release canvas paint lock and refresh the display
 	$oCanvas.Item('fzScale') = $fNewScale                                   ; save zoom scale for future reference
 
 	If $UX Then __WinTitleNote(Int(100 * $fNewScale) & "%")                 ; show user the new zoom/scale factor
@@ -967,73 +813,29 @@ EndFunc   ;==>__Canvas_BlockTabNativeToggle_Handler
 
 
 
-
-
-
 ; ---------------------------------------------------------------------------
 ; ---------------------------------------------------------------------------
-; misc functions
+; quell background erase for pictures in the gui
 
 
 
-Func __IsHwndPicture($hWnd)
-	If $hWnd = 0 Then Return False
-	If _WinAPI_GetClassName($hWnd) <> "Static" Then Return False            ; 1. Verify it belongs to the Static class landscape
-	Local $iStyle = _WinAPI_GetWindowLong($hWnd, $GWL_STYLE)                ; 2. Fetch the window's style flags
-	If BitAND($iStyle, $SS_BITMAP) = $SS_BITMAP Then Return True            ; 3. Check if the control has the SS_BITMAP (0x000E) style automatically assigned by GUICtrlCreatePic
-	Return False                                                            ; It's likely a standard text label
-EndFunc   ;==>__IsHwndPicture
+Func __Canvas_GuiPicRegister($hWnd)     ; register your picture handle to block WM_ERASEBKGND events
+	If Not __IsDictionary($g_oGuiPics) Then $g_oGuiPics = ObjCreate("Scripting.Dictionary")
+	$g_oGuiPics.Item(String($hWnd)) = 1
+EndFunc   ;==>__Canvas_GuiPicRegister
+
+Func __Canvas_GuiPicUnregister($hWnd)   ; unregister your picture handle
+	$g_oGuiPics.Remove($hWnd)
+EndFunc   ;==>__Canvas_GuiPicUnregister
+
+
+Func __Canvas_WM_ERASEBKGND_Handler($hWnd, $iMsg, $wParam, $lParam)
+	If $g_oGuiPics.Exists(String($hWnd)) Then Return 1              ; Return 1 to tell Windows the erase is handled (prevents the flash)
+	Return $GUI_RUNDEFMSG                                           ; Let other controls erase normally
+EndFunc   ;==>__Canvas_WM_ERASEBKGND_Handler
 
 
 
-Func __Canvas_IsWebView($oCanvas)
-	If Not __IsDictionary($oCanvas) Then Return False
-	Return $oCanvas.Exists('aWebView')
-EndFunc   ;==>__Canvas_IsWebView
-
-
-
-Func __LockRepaint($hWnd = $g_hMainGui)
-	GUISetState(@SW_LOCK, $hWnd)                ; prevent windows from repainting or processing changes until we are done with all changes
-EndFunc   ;==>__LockRepaint
-
-
-
-Func __UnlockRepaint($hWnd = $g_hMainGui)
-	GUISetState(@SW_UNLOCK, $hWnd)              ; unlock the repainting so windows can update the screen
-	_WinAPI_RedrawWindow($g_hMainGui, 0, 0, _   ; request windows to redraw/repaint
-			BitOR($RDW_INVALIDATE, $RDW_UPDATENOW, $RDW_ALLCHILDREN))
-EndFunc   ;==>__UnlockRepaint
-
-
-
-
-
-
-; ---------------------------------------------------------------------------
-; ---------------------------------------------------------------------------
-; briefly show a status message in the window title (like zoom percentage)
-
-Global $g_iTitleNoteTimer = 0                                                                 ; Tracks the high-resolution timestamp marker
-Global $g_sTitleNoteTitle = ''
-
-Func __WinTitleNoteTrack()
-	If $g_iTitleNoteTimer = 0 Then Return
-	If TimerDiff($g_iTitleNoteTimer) < 1200 Then Return
-	_WinAPI_SetWindowText($g_hMainGui, $g_sTitleNoteTitle)
-	_WinAPI_RedrawWindow($g_hMainGui, 0, 0, BitOR($RDW_FRAME, $RDW_INVALIDATE, $RDW_UPDATENOW))
-	$g_sTitleNoteTitle = ''
-	$g_iTitleNoteTimer = 0
-EndFunc   ;==>__WinTitleNoteTrack
-
-
-Func __WinTitleNote($sTip)
-	If $g_sTitleNoteTitle = '' Then $g_sTitleNoteTitle = _WinAPI_GetWindowText($g_hMainGui)
-	$g_iTitleNoteTimer = TimerInit()
-	If $sTip <> '' Then $sTip = "   " & $sTip
-	_WinAPI_SetWindowText($g_hMainGui, $g_sTitleNoteTitle & $sTip)
-	_WinAPI_RedrawWindow($g_hMainGui, 0, 0, BitOR($RDW_FRAME, $RDW_INVALIDATE, $RDW_UPDATENOW))
-EndFunc   ;==>__WinTitleNote
 
 
 
@@ -1170,113 +972,6 @@ Func _CustomGetMonitorInfo($hMonitor)
 EndFunc   ;==>_CustomGetMonitorInfo
 
 
-
-
-
-
-
-
-; -------------------------------------------------------------------------------------------------------------------------
-; -------------------------------------------------------------------------------------------------------------------------
-; -------------------------------------------------------------------------------------------------------------------------
-; GUI helper functions
-;
-;
-
-
-
-
-
-; ===================================================================================================
-; Function:    __GUICtrlSetPicture
-; Description: Takes raw TCP binary data, detects the control's size, optionally resizes the image to fit, and displays it
-; Parameters:  $hPic - windows handle of the picture gui control
-;              $bImage - The raw binary buffer downloaded from your TCP socket
-; 			   $bFit = true to resize the image to fit
-; ===================================================================================================
-Func __GUICtrlSetPicture($hPic, $bImage, $bFit = True)
-	_GDIPlus_Startup()                                                                      ; Ensure GDI+ is initialized
-	Local $hBitmap = _GDIPlus_BitmapCreateFromMemory($bImage)                               ; 1. Load the binary data into a GDI+ Bitmap object
-	If @error Then Return False
-	If $bFit Then
-		;Local $hPic = GUICtrlGetHandle($cPic)
-		Local $aPos = __API_ControlGetPos($hPic)
-		If Not @error And IsArray($aPos) Then
-			If UBound($aPos) >= 4 Then
-				Local $iTargetWidth = $aPos[2] ; Control Width
-				Local $iTargetHeight = $aPos[3] ; Control Height
-				If $iTargetWidth > 0 And $iTargetHeight Then
-					Local $hOrig = $hBitmap
-					$hBitmap = _GDIPlus_ImageResize($hOrig, $iTargetWidth, $iTargetHeight)
-					_GDIPlus_BitmapDispose($hOrig) ; Delete original memory map object
-				EndIf
-			EndIf
-		EndIf
-	EndIf
-	Local $hHBitmap = _GDIPlus_BitmapCreateHBITMAPFromBitmap($hBitmap)                      ; 2. Convert the GDI+ Bitmap into a usable Windows GDI HBITMAP
-	;Local $hPrevBmp = GUICtrlSendMsg($cPic, $STM_SETIMAGE, $IMAGE_BITMAP, $hHBitmap)        ; This replaces the current image and returns the previous HBITMAP handle  (0x0172 = STM_SETIMAGE)
-	Local $hPrevBmp = _SendMessage($hPic, $STM_SETIMAGE, $IMAGE_BITMAP, $hHBitmap)          ; This replaces the current image and returns the previous HBITMAP handle  (0x0172 = STM_SETIMAGE)
-	_GDIPlus_BitmapDispose($hBitmap)                                                        ; 4. CLEAN UP MEMORY (Crucial step to prevent your app from crashing or hogging RAM)
-	If $hPrevBmp Then _WinAPI_DeleteObject($hPrevBmp)                                       ; Delete the image that was just overwritten
-	Local $hOldBmp = Eval("hPic" & Hex($hPic))
-	If $hOldBmp <> '' Then _WinAPI_DeleteObject($hOldBmp)                                   ; Delete our tracked backup object
-	Assign("hPic" & Hex($hPic), $hHBitmap, 2)                                               ; Track the current bitmap handle so we can safely delete it on the next incoming picture update
-	_GDIPlus_Shutdown()                                                                     ; shutdown GDI+ until we need it again later
-	Return True
-EndFunc   ;==>__GUICtrlSetPicture
-
-
-
-; This function takes your raw TCP binary bytes and scales them to specific Target Dimensions
-Func __Pic_Resize($bImageBinary, $iTargetWidth, $iTargetHeight)
-	_GDIPlus_Startup()
-	Local $hBitmapFromMem = _GDIPlus_BitmapCreateFromMemory($bImageBinary)                          ; 1. Load the raw binary bytes into a GDI+ Bitmap
-	If @error Then Return SetError(@error, @extended, False)
-	Local $hResizedImage = _GDIPlus_ImageResize($hBitmapFromMem, $iTargetWidth, $iTargetHeight)     ; 2. Resize the image down/up to your exact target dimensions
-	_GDIPlus_BitmapDispose($hBitmapFromMem)                                                         ; 5. Memory Cleanup (Crucial to avoid RAM crashes)
-	;_GDIPlus_BitmapDispose($hResizedImage)  														; Delete the resized GDI+ map
-	_GDIPlus_Shutdown()
-	Return $hResizedImage
-EndFunc   ;==>__Pic_Resize
-
-
-#cs
-; ===================================================================================================
-; Function:    __GDIPlus_BitmapToBinary
-; Description: Converts a GDI+ image handle back into a raw binary buffer (opposite of CreateFromMemory)
-; Parameters:  $hImage      - The GDI+ image or bitmap handle
-;              $sFormat     - The format string: "JPG", "PNG", "BMP", or "GIF" (Default: "JPG")
-;              $iQuality    - Compression quality for JPG (0-100). Ignored for other formats.
-; ===================================================================================================
-Func __GDIPlus_BitmapToBinary($hImage, $sFormat = "JPG", $iQuality = 85)
-	_GDIPlus_Startup()
-	Local $sCLSID = _GDIPlus_EncodersGetCLSID($sFormat)                         ; 1. Get the Encoder Class ID (CLSID) for the requested target format
-	If @error Then Return SetError(1, 0, Binary(""))
-	Local $bBinaryResult = Binary("")
-	Local $tParams = 0                                                          ; 2. Set up the image quality parameters if saving as a JPG
-	If StringUpper($sFormat) = "JPG" Then
-		Local $tData = DllStructCreate("int Quality")
-		DllStructSetData($tData, "Quality", $iQuality)
-		$tParams = _GDIPlus_ParamInit(1)
-		_GDIPlus_ParamAdd($tParams, $GDIP_EPGQUALITY, 1, $GDIP_EPTLONG, DllStructGetPtr($tData))
-	EndIf
-	Local $hStream = _WinAPI_CreateStreamOnHGlobal()                            ; 3. Save the image data into a virtual IStream object (In-Memory Stream)
-	If _GDIPlus_ImageSaveToStream($hImage, $hStream, $sCLSID, $tParams) Then _
-			$bBinaryResult = _WinAPI_GetMemoryFromStream($hStream)              ; 4. Extract the raw bytes directly from the memory stream
-	_WinAPI_ReleaseStream($hStream)                                             ; 5. Clean up stream resources
-	_GDIPlus_Shutdown()
-	Return $bBinaryResult                                                       ; Returns a variable with the "0x..." binary type
-EndFunc   ;==>_GDIPlus_BitmapToBinary
-#ce
-
-
-
-
-Func __IsComboBox($hControl)
-	If Not IsHWnd($hControl) Then Return False              ; 1. Ensure the handle is a valid window/control handle
-	Local $sClassName = _WinAPI_GetClassName($hControl)     ; 2. Retrieve the underlying window class name
-	Return (StringInStr($sClassName, "ComboBox") > 0)       ; 3. Check if it's a standard Win32 ComboBox or a framed variant (e.g., .NET / WinForms)
-EndFunc   ;==>__IsComboBox
 
 
 

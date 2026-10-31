@@ -3,19 +3,6 @@
 
 
 
-Func __TemperatureFtoC($iF)     ; convert deg F to deg C
-	Return ($iF - 32) * 5 / 9
-EndFunc   ;==>__TemperatureFtoC
-
-
-
-Func __TemperatureCtoF($iC)     ; convert deg F to deg C
-	Return ($iC * 9 / 5) + 32
-EndFunc   ;==>__TemperatureCtoF
-
-
-
-
 Global $aVars[1][2] = [["", ""]]                                                                ; custom user variable list
 Global $g_varsConfigSection = "Variables"
 Global $g_configFile
@@ -48,7 +35,7 @@ Func Vars_Assert()
 	For $i = 0 To $e
 		$n = $aVars[$i][0]
 		If StringLeft($n, 1) = "$" Then $n = StringTrimLeft($n, 1)
-		Assign($n, $aVars[$i][1], 1)               ; assign as a global variable, param3=1
+		Assign($n, $aVars[$i][1], 2)               ; assign as a global variable, param3=2
 	Next
 EndFunc   ;==>Vars_Assert
 

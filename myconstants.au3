@@ -25,9 +25,12 @@ Global Const $ICON_NET = ChrW(0xD83D) & ChrW(0xDDA7)
 Global Const $ICON_TABS = ChrW(0xD83D) & ChrW(0xDDC2) ; ChrW(0x29C9) ; ChrW(0x2EB2)
 Global Const $ICON_BOOK = ChrW(0xD83D) & ChrW(0xDD6E)
 Global Const $ICON_FLOPPY = ChrW(0xD83D) & ChrW(0xDCBE) ; ChrW32(0x1F4BE)
-Global Const $ICON_FOLDER = ChrW(0xD83D) & ChrW(0xDCC1) ; ChrW32(0x1F4C1)
+Global Const $ICON_FOLDER1 = ChrW(0xD83D) & ChrW(0xDCC1) ; ChrW32(0x1F4C1)
+Global Const $ICON_FOLDER2 = ChrW32(0x1F4C2)
 Global Const $ICON_SAVE = $ICON_FLOPPY
-Global Const $ICON_OPEN = $ICON_FOLDER
+Global Const $ICON_OPEN = $ICON_FOLDER2
+Global Const $ICON_CHECK = ChrW(0x2713)
+
 
 Global Const $COLOR_NEUTRAL = 0xFDFDFD
 Global Const $COLOR_GRAY2 = 0xFDFDFD

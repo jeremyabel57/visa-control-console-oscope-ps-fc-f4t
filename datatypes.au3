@@ -2,6 +2,16 @@
 
 
 
+
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+; data type boolean tests
+;
+
+
+
 Func __IsDictionary($vVar)                                                      ; confirm $vVar is a scripting dictionary or not
 	If Not IsObj($vVar) Then Return False
 	Return ObjName($vVar) = "Dictionary"
@@ -63,5 +73,205 @@ Func __SocketToIP($hSocket)
 	EndIf
 	Return 0
 EndFunc   ;==>__SocketToIP
+
+
+
+
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+; temperature conversions
+;
+
+
+Func __TemperatureFtoC($iF)     ; convert deg F to deg C
+	Return ($iF - 32) * 5 / 9
+EndFunc   ;==>__TemperatureFtoC
+
+
+
+Func __TemperatureCtoF($iC)     ; convert deg F to deg C
+	Return ($iC * 9 / 5) + 32
+EndFunc   ;==>__TemperatureCtoF
+
+
+
+
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+; AssignEx and EvalEx
+;
+
+
+
+;			AssignEx
+; task:		same as Assign, but allow for subscripts
+; in:		$sVar = name of variable (without the leading $)
+;			$vVal = value/data to assign to variable
+; out:		1 if successful
+;			0 if failed
+; note:		byref $vVal to hopefully save memory with big payloads
+;			$sVar can be variable[subscript] or variable[row][col]
+;			if sVar is an array, map, or dictionary then the subscript is used
+Func AssignEx($sVar, ByRef $vVal, $oDev)
+	Local $vVar
+	Local $i = StringInStr($sVar, "[")
+	If $i <= 0 Then $i = StringInStr($sVar, "(")
+	If $i <= 0 Then Return Assign($sVar, $vVal, 2)
+
+	Local $sIdx = StringTrimRight(StringTrimLeft($sVar, $i), 1)
+	If StringInStr("""'", StringLeft($sIdx, 1)) Then $sIdx = StringTrimLeft($sIdx, 1)
+	If StringInStr("""'", StringRight($sIdx, 1)) Then $sIdx = StringTrimRight($sIdx, 1)
+	$sVar = StringLeft($sVar, $i - 1)
+	$vVar = Eval($sVar)
+	If IsArray($vVar) Then
+		$i = StringInStr($sIdx, "]")
+		If $i > 0 Then                                                  ; if 2D array
+			Local $iCol = Int(StringTrimLeft($sIdx, $i + 1))
+			$sIdx = Int(StringLeft($sIdx, $i - 1))
+			If UBound($vVar, 0) < 2 Then Return 0
+			If $iCol < 0 Or UBound($vVar, 2) <= $iCol Then Return 0
+			If $sIdx < 0 Or UBound($vVar, 1) <= $sIdx Then Return 0
+			$vVar[$sIdx][$iCol] = $vVal
+		Else                                                            ; else 1D array
+			$sIdx = Int($sIdx)
+			If $sIdx < 0 Or UBound($vVar) <= $sIdx Then Return 0        ; ignore out of bounds subscript
+			$vVar[$sIdx] = $vVal
+		EndIf
+	ElseIf IsMap($vVar) Then                                            ; if map
+		$vVar[String($sIdx)] = $vVal
+	ElseIf __IsDictionary($vVar) Then                                   ; if dictionary
+		$vVar.Item(String($sIdx)) = $vVal
+		Return 1
+	EndIf
+	Return Assign($sVar, $vVar, 2)                                      ; assign value back to variable
+EndFunc   ;==>AssignEx
+
+
+
+;			EvalEx
+; task:		same as Eval, but allow for subscripts
+; in:		$sVar = name of variable (without the leading $)
+; out:		value of the variable or subscript of the variable
+;			returns empty string and @error=1 if the variable does not exist or the subscript is out of range
+; note:		allow for subscripts in the variable name being assigned
+;			$sVar can be variable[subscript] or variable[row][col]
+;			if sVar is an array, map, or dictionary then the subscript is used
+Func EvalEx($sVar, $oDev)
+	Local $i = StringInStr($sVar, "[")
+	If $i <= 0 Then $i = StringInStr($sVar, "(")
+	If $i <= 0 Then Return Eval($sVar)
+	Local $sIdx = StringTrimRight(StringTrimLeft($sVar, $i), 1)
+	If StringInStr("""'", StringLeft($sIdx, 1)) Then $sIdx = StringTrimLeft($sIdx, 1)
+	If StringInStr("""'", StringRight($sIdx, 1)) Then $sIdx = StringTrimRight($sIdx, 1)
+	$sVar = StringLeft($sVar, $i - 1)
+	$vVar = Eval($sVar)
+	If IsArray($vVar) Then
+		$i = StringInStr($sIdx, "]")
+		If $i > 0 Then                                                  ; if 2D array
+			Local $iCol = Int(StringTrimLeft($sIdx, $i + 1))
+			$sIdx = Int(StringLeft($sIdx, $i - 1))
+			If UBound($vVar, 0) < 2 Then Return SetError(1, 0, '')
+			If $iCol < 0 Or UBound($vVar, 2) <= $iCol Then Return SetError(1, 0, '')
+			If $sIdx < 0 Or UBound($vVar, 1) <= $sIdx Then Return SetError(1, 0, '')
+			Return $vVar[$sIdx][$iCol]
+		Else                                                            ; else 1D array
+			$sIdx = Int($sIdx)
+			If $sIdx < 0 Or UBound($vVar) <= $sIdx Then Return SetError(1, 0, '')
+			Return $vVar[$sIdx]
+		EndIf
+	ElseIf IsMap($vVar) Then                                            ; if map
+		$sIdx = String($sIdx)
+		If MapExists($vVar, $sIdx) Then Return $vVar[$sIdx]
+		Return SetError(1, 0, '')
+	ElseIf __IsDictionary($vVar) Then                                   ; if dictionary
+		$sIdx = String($sIdx)
+		If $vVar.Exists($sIdx) Then Return $vVar.Item($sIdx)
+		Return SetError(1, 0, '')
+	EndIf
+	Return $vVar
+EndFunc   ;==>EvalEx
+
+
+
+
+
+
+
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+; Assign/Eval storing variables in a dictionary
+;
+
+
+
+Global $g_vars = ObjCreate("Scripting.Dictionary")
+
+
+
+;			AssignDict
+; task:		store variable in a dictionary instead of a global variable
+; in:		$sVar = name of variable (without the leading $)
+;			$vVal = value/data to assign to variable
+; out:		$vVal
+;			if error then @error=1 and return=0
+; note:		byref $vVal to hopefully save memory with big payloads
+Func AssignDict($sVar, ByRef $vVal, $oDict = $g_vars)
+	If StringLeft($sVar, 1) = "$" Then $sVar = StringTrimLeft($sVar, 1)
+	If Not __IsDictionary($oDict) Then Return SetError(1, 0, 0)
+	$oDict.Item(String($sVar)) = $vVal
+	Return $vVal
+EndFunc   ;==>AssignDict
+
+
+
+;			EvalDict
+; task:		retrieve variable from dictionary instead of global variable
+; in:		$sVar = name of variable (without the leading $)
+; out:		value of the variable or subscript of the variable
+;			returns empty string and @error=1
+Func EvalDict($sVar, $oDict = $g_vars)
+	If StringLeft($sVar, 1) = "$" Then $sVar = StringTrimLeft($sVar, 1)
+	If Not __IsDictionary($oDict) Then Return SetError(1, 0, '')
+	$sVar = String($sVar)
+	If $oDict.Exists($sVar) Then Return $oDict.Item($sVar)
+	Return SetError(1, 0, '')
+EndFunc   ;==>EvalDict
+
+
+
+
+
+
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+;
+
+
+; Function to convert any integer to a binary string
+Func _Bits($iVal, $iBits = 8)
+	Local $sBin = ""
+	For $i = $iBits - 1 To 0 Step -1
+		$sBin &= BitAND(BitShift($iVal, $i), 1)
+	Next
+	Return $sBin
+EndFunc   ;==>_Bits
+
+
+
+
+
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+;
 
 

@@ -6,7 +6,9 @@
 
 #include <File.au3>
 #include <FileConstants.au3>
-
+#include <GUIConstants.au3>
+#include <GuiComboBox.au3>
+#include <GuiComboBoxEx.au3>
 
 
 ;			__FileNameAutoIncrement
@@ -70,4 +72,104 @@ Func __IsFullPathSpecified($sPath)
 	If $sDrive <> "" And $sDir <> "" And $sDir <> "\" Then Return True          ; 3. If there is a root drive (e.g., "C:") and a folder path (e.g., "\temp\"), it is an absolute path
 	Return False
 EndFunc   ;==>__IsFullPathSpecified
+
+
+
+
+; -------------------------------
+; -------------------------------
+; -------------------------------
+; -------------------------------
+; ini file read/write data types
+
+
+
+Global $g_configFile, $g_configSection
+
+
+Func __IniReadGuiCheckbox($hCheckbox, $sKey, $configSection = $g_configSection, $configFile = $g_configFile)
+	__GuiCheckbox($hCheckbox, Int(IniRead($configFile, $configSection, $sKey, Int(__GuiCheckbox($hCheckbox)))))
+	;GUICtrlSetState($hCheckbox, _
+	;		Number(IniRead($configFile, $configSection, $sKey, Number(GUICtrlRead($hCheckbox) = $GUI_CHECKED))) ? _
+	;		$GUI_CHECKED : $GUI_UNCHECKED)
+EndFunc   ;==>__IniReadGuiCheckbox
+
+Func __IniWriteGuiCheckbox($hCheckbox, $sKey, $configSection = $g_configSection, $configFile = $g_configFile)
+	IniWrite($configFile, $configSection, $sKey, Number(__GuiCheckbox($hCheckbox)))
+EndFunc   ;==>__IniWriteGuiCheckbox
+
+
+Func __GuiCheckbox($hCheckbox, $bState = False)
+	If @NumParams <= 1 Then Return (GUICtrlRead($hCheckbox) = $GUI_CHECKED)
+	GUICtrlSetState($hCheckbox, $bState ? $GUI_CHECKED : $GUI_UNCHECKED)
+EndFunc   ;==>__GuiCheckbox
+
+
+Func __IniReadGuiComboBox($hCombo, $sKey, $configSection = $g_configSection, $configFile = $g_configFile)
+	GUICtrlSetData($hCombo, _
+			IniRead($configFile, $configSection, $sKey & "List", _GUICtrlComboBox_GetList($hCombo)), _
+			IniRead($configFile, $configSection, $sKey, GUICtrlRead($hCombo)))
+EndFunc   ;==>__IniReadGuiComboBox
+
+Func __IniWriteGuiComboBox($hCombo, $sKey, $configSection = $g_configSection, $configFile = $g_configFile)
+	IniWrite($configFile, $configSection, $sKey & "List", _GUICtrlComboBox_GetList($hCombo))
+	IniWrite($configFile, $configSection, $sKey, GUICtrlRead($hCombo))
+EndFunc   ;==>__IniWriteGuiComboBox
+
+
+
+Func __IniReadArray($a, $sKey, $configSection = $g_configSection, $configFile = $g_configFile)                  ; read array from ini file, return it
+	Local $nr, $nc, $ir, $ic
+	$nr = Int(IniRead($configFile, $configSection, $sKey & "nr", 0))
+	$nc = Int(IniRead($configFile, $configSection, $sKey & "nc", 0))
+	If $nr <= 0 Then                            ; 1D array
+		If $nc <= 0 Then Return $a              ; no columns found, return default
+		Dim $a[$nr]
+		$nr -= 1
+		For $ir = 0 To $nr
+			$a[$ir] = IniRead($configFile, $configSection, $sKey & "r" & $ir, '')
+		Next
+		Return $a
+	EndIf
+	If $nc <= 0 Then Return $a                  ; no columns found, return default
+	Dim $a[$nr][$nc]                            ; 2D array
+	$nc -= 1
+	$nr -= 1
+	For $ir = 0 To $nr
+		For $ic = 0 To $nc
+			$a[$ir][$ic] = IniRead($configFile, $configSection, $sKey & "r" & $ir & "c" & $ic, '')
+		Next
+	Next
+	Return $a
+EndFunc   ;==>__IniReadArray
+
+
+
+Func __IniWriteArray($a, $sKey, $configSection = $g_configSection, $configFile = $g_configFile)        ; write array to ini file
+	If Not IsArray($a) Then Return False
+	Local $nr, $nc, $ir, $ic
+	If UBound($a, 0) < 1 Then Return False
+	$nr = UBound($a, 1)
+	If $nr <= 0 Then Return False
+	If UBound($a, 0) = 1 Then                   ; 1D array
+		IniWrite($configFile, $configSection, $sKey & "nr", $nr)
+		$nr -= 1
+		For $ir = 0 To $nr
+			IniWrite($configFile, $configSection, $sKey & "r" & $ir, $a[$ir])
+		Next
+		Return True
+	EndIf
+	$nc = UBound($a, 2)                         ; 2D array
+	If $nc <= 0 Then Return False
+	IniWrite($configFile, $configSection, $sKey & "nr", $nr)
+	IniWrite($configFile, $configSection, $sKey & "nc", $nc)
+	$nr -= 1
+	$nc -= 1
+	For $ir = 0 To $nr
+		For $ic = 0 To $nc
+			IniWrite($configFile, $configSection, $sKey & "r" & $ir & "c" & $ic, $a[$ir][$ic])
+		Next
+	Next
+	Return True
+EndFunc   ;==>__IniWriteArray
 

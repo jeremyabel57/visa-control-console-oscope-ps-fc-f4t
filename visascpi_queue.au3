@@ -1,13 +1,20 @@
 #include-once
 
 ; debug
-Global $g_viPrintCmds = False
-Global $g_viPrintCondCmds = False
-Global $g_viPrintQueuePop = False
-Global $g_viPrintQueuePush = False
-Global $g_viPrintpQue = False
-Global $g_viPrintpQueCond = False
-Global $g_viPrintLoopRead = False
+Global $g_mbPrint = 0
+Global $g_mbPrintDecode = 0
+Global $g_mbPrintDecodeString = 0
+Global $g_F4T_PrintResolv = 0
+
+Global $g_viPrintCmds = 1
+Global $g_viPrintReplies = 1
+
+Global $g_viPrintCondCmds = 0
+Global $g_viPrintQueuePop = 0
+Global $g_viPrintQueuePush = 0
+Global $g_viPrintpQue = 0
+Global $g_viPrintpQueCond = 0
+Global $g_viPrintLoopRead = 0
 
 #cs
 
@@ -35,10 +42,10 @@ nonblocking functions:
 		Adds the request to the queue
 	__viCmd($oDev, $sCmd)
 		same as __viReq except do not wait for a response ($bWait = false)
-	__viUploadFile($oDev, $sFile, $sReq, $iTimeoutMS=15000)
+	__viUploadFile($oDev, $sFile, $sReq, $iTimeoutMS=5000)
 		$sFile = file path/name of file to send
 		$sReq = visa command to send as the prefix to the file data
-	__viDownloadFile($oDev, $sFile, $sReq, $iTimeoutMS=15000)
+	__viDownloadFile($oDev, $sFile, $sReq, $iTimeoutMS=5000)
 		$sFile = file path/name to save downloaded file
 		$sReq = visa command to send to initiate the transfer
 	__viIsReqDone($oDev)
@@ -64,7 +71,7 @@ nonblocking functions:
 		same as __mbRead, but waits for and returns the value read from the register
 	__mbRead($oDev, $sDataType, $iRegAddr, $iTimeoutMS)
 		sends a modbus register read request
-		$sDataType = "32i" "32f" "16i" "16f" for 32 or 16 bit, integer or floating point
+		$sDataType = "Nt", n=number of 16-bit words, t=type (i=integer, f=float, s=string)
 	__mbRet($oDev)
 		same as __viRet - use this to pull the return value from the async __mbRead
 	__mbHasRet($oDev)
@@ -99,6 +106,11 @@ script functions:
 		logfile filename					set the log file name and path to 'filename'
 		log	string							append 'string' to the logfile - use this for saving measurements.  'string' is evaluated with Execute() - see below
 		set $var expr                   	set variable 'var' to the value of expression 'expr'
+		close								close the connection.  it will not reopen until the next visa or modbus command is attempted
+
+		sel[ect] [sc|dc|tc|fc]				select active visa device.  all following visa commands will be sent to that device.  This device must be registered
+											in the $g_oViSelect dictionary under the identifier sc|dc|tc|fc for it to work, otherwise the commands are skipped
+
 
 	script conditional statements:
 		if cond								if cond evaluates to true then execute the first statement body
@@ -128,10 +140,11 @@ script functions:
 
 
 ; common visa commands
-Global Const $VI_REQ_ERR = ":SYST:ERR?"
+Global Const $VI_REQ_ERR = ":SYSTem:ERRor?"
 Global Const $VI_IDN = "*IDN?"
 Global Const $VI_CLS = "*CLS"
 Global Const $VI_RST = "*RST"
+Global Const $VI_GTL = "&GTL"
 
 
 
@@ -144,13 +157,20 @@ Global Const $VI_RST = "*RST"
 ; -----------------------------------------------------------------------------------------------------------------
 ; -----------------------------------------------------------------------------------------------------------------
 
+
+#include <StructureConstants.au3>
 #include <File.au3>
 #include "deque.au3"
 #include "filemisc.au3"
+#include "winfuncs.au3"
 
 
 
-Global $g_oViInstruments = ObjCreate("Scripting.Dictionary")                                ; Global visa instrument/device list
+Global $g_oViDevs = ObjCreate("Scripting.Dictionary")                                       ; Global visa instrument/device list
+;Global $g_oViDevs                                                                           ; Global visa instrument/device list
+Global $g_oViSelect = ObjCreate("Scripting.Dictionary")                                     ; list of devices selected for use with the main script queue
+Global $g_oNotices = ObjCreate("Scripting.Dictionary")                                      ; list of return notices for commands that have completed
+Global $g_oDevMain                                                                          ; pointer direct to main script queue
 Global $g_logfile = _PathFull("log.txt")                                                    ; script logfile
 
 Global $__vi_hDll = 0                                                                       ; handle for visa.dll
@@ -169,9 +189,8 @@ Global Const $VI_ATTR_RM_SESSION = 0x3FFF00C4
 Global Const $VI_ATTR_RSRC_CLASS = 0xBFFF0001                                               ; Resource Class attribute lookup constant (Universally supported read-only query)
 Global Const $VI_ATTR_TMO_VALUE = 0x3FFF001A
 
-;Global Const $VI_NOWAIT = -1                                                                ; used for screenshot command list as the timeout number for commands that do not require a reply
 
-
+Global $g_dbg_hOutput, $g_dbg_hStack, $g_dbg_hQueue                                         ; debug tab handles for monitor windows
 
 
 
@@ -223,7 +242,7 @@ Func __viScriptTest_debug()
 	__viScript($viDev, $sCmds, "", 1000)
 	__viFlush($viDev)
 
-EndFunc   ;==>oscopeTab_debug
+EndFunc   ;==>scTab_debug
 #ce
 
 
@@ -250,9 +269,9 @@ EndFunc   ;==>oscopeTab_debug
 ;     if it is not in the list, then make a new entry and point oDev to it.
 ;   oDev can then be used for subsequent function calls for that visa device/instrument
 ;
-; __viMakeInstrumentIndex($aIP)                                             ; given parsed IP address, make an instrument index string for $g_oViInstruments
+; __viMakeInstrumentIndex($aIP)                                             ; given parsed IP address, make an instrument index string for $g_oViDevs
 ; __viIsInstrument($viHandle)                                               ; confirm $viHandle is a visa instrument handle or not
-; __IsDictionary($vVar)                                          ; confirm $vVar is a scripting dictionary or not
+; __IsDictionary($vVar)                                          			; confirm $vVar is a scripting dictionary or not
 ; __viParseIPaddress($ipAddr, $defPort = 0)									; parse [raw:]IP[:port] into IP, port, and raw
 ; __viMakeVisaAddress($ipAddr, $iPort = "", $iMode = 0)						; make a visa resource address, i.e. TCPIP0::IP::port::INSTR
 ; __viMakeInstrument($sIpAddr, $oDev = False)								; make instrument data structure from IP address
@@ -268,22 +287,28 @@ EndFunc   ;==>oscopeTab_debug
 ; out:	$oDev is converted from string to handle
 ;		returns true if successful, false if vihandle is invalid
 Func __viResolveInstrument(ByRef $oDev)
-	If __viIsInstrument($oDev) Then Return True                                 ; if already an instrument handle then nothing to do, return ok\
-	If $oDev = "" Then Return False                                             ; if blank input then return fail
+	If __viIsInstrument($oDev) Then Return True                                 ; if already an instrument handle then nothing to do, return ok
+	If Not IsString($oDev) Then Return False
+	If $oDev = "" Or $oDev = "raw:" Then Return False                           ; if blank input then return fail
 	Local $sIdx = __viMakeInstrumentIndex(__viParseIPaddress($oDev, ""))        ; assume it is an ip address and parse it
-	If Not $g_oViInstruments.Exists($sIdx) Then _                               ; if not found in the file then create a new entry for it
-			$g_oViInstruments.Item($sIdx) = __viMakeInstrument($oDev)
-	$oDev = $g_oViInstruments.Item($sIdx)                                       ; point $oDev to the device data structure
+	If $sIdx = "" Then Return False
+	;	If Not __IsDictionary($g_oViDevs) Then $g_oViDevs = ObjCreate("Scripting.Dictionary")
+	If Not $g_oViDevs.Exists($sIdx) Then _                                      ; if not found in the file then create a new entry for it
+			$g_oViDevs.Item($sIdx) = __viMakeInstrument($oDev)
+	$oDev = $g_oViDevs.Item($sIdx)                                              ; point $oDev to the device data structure
+	If $sIdx = "main" Then $g_oDevMain = $oDev                                  ; if this is the main script queue then point the main pointer to it
 	Return True                                                                 ; return ok
 EndFunc   ;==>__viResolveInstrument
+Func __viResolve(ByRef $oDev)
+	Return __viResolveInstrument($oDev)
+EndFunc   ;==>__viResolve
 
 
-
-Func __viMakeInstrumentIndex($aIP)                                              ; given parsed IP address, make an instrument index string for $g_oViInstruments
+Func __viMakeInstrumentIndex($aIP)                                              ; given parsed IP address, make an instrument index string for $g_oViDevs
 	Local $sPort = $aIP[1]
 	If $sPort = 5025 Or $sPort = "inst0" Then $sPort = ""                       ; if port number is default then make it blank
 	If $sPort <> "" Then $sPort = ":" & $sPort
-	Return $aIP[0] & $sPort                                                     ; search string to use to find existing instrument in global file $g_oViInstruments
+	Return $aIP[0] & $sPort                                                     ; search string to use to find existing instrument in global file $g_oViDevs
 EndFunc   ;==>__viMakeInstrumentIndex
 
 
@@ -338,6 +363,10 @@ EndFunc   ;==>__viMakeVisaAddress
 
 
 
+
+; Instrument Map
+;
+
 ;			__viMakeInstrument
 ; task:		make an vi instrument map data from the ip address string
 ; in:		$sIpAddr = ip address string format: [raw:]IP[:port]
@@ -353,19 +382,23 @@ Func __viMakeInstrument($sIpAddr, $oDev = False)
 	$oDev.Item('viIpPort') = $aIP[1]                                                    ; ip address port part
 	$oDev.Item('viIpMode') = $aIP[2]                                                    ; communication protocol 0=vxi-11, 1=raw socket
 	$oDev.Item('viAddr') = __viMakeVisaAddress($aIP[0], $aIP[1], $aIP[2])               ; visa device address string
+	$oDev.Item('viIdn') = ''                                                            ; IDN string received from device
+	$oDev.Item('viType') = ''                                                           ; classification initials for what type of device (tc, fc, dc, sc)
 
 	; comm handles and state
 	$oDev.Item('viSession') = 0                                                         ; visa handle when using visa dll communications
 	$oDev.Item('viSocket') = 0                                                          ; socket handle for raw TCP socket protocol
 	$oDev.Item('state') = 0                                                             ; true if session is open, false if closed
-	;$oDev.Item('first') = 1                                                        	; true if this is the first communications with the device
 
-	; modbus and F4T thermal chamber variables
+	; modbus variables
 	$oDev.Item('mbIpPort') = 502                                                        ; ModBus TCP IP port number
 	$oDev.Item('mbSocket') = 0                                                          ; ModBus TCP receive buffer
 	$oDev.Item('mbTransID') = 0x100                                                     ; ModBus transaction ID
-	$oDev.Item('mbWordOrder') = 0                                                       ; F4T modbus word order 0=low-high, 1=high-low
-	$oDev.Item('mbDataMap') = -1                                                        ; F4T thermal chamber data map 1=current, 2=legacy, -1=yet determined
+
+	; F4T Thermal/Environmental Chamber variables
+	$oDev.Item('f4tWordOrder') = -1                                                     ; F4T modbus word order 0=low-high, 1=high-low
+	$oDev.Item('f4tDataMap') = -1                                                       ; F4T thermal chamber data map 1=current, 2=legacy, -1=yet determined
+	$oDev.Item('f4tUnits') = -1                                                         ; F4T thermal chamber units 1=C, 0=F
 
 	; request/command
 	$oDev.Item('cmd') = ''                                                              ; command currently being processed
@@ -373,6 +406,8 @@ Func __viMakeInstrument($sIpAddr, $oDev = False)
 	$oDev.Item('timeout') = 1000                                                        ; timeout limit in milliseconds
 	$oDev.Item('reqdone') = False                                                       ; request done flag for API usage.  set true when request, and if needed response, completes
 	$oDev.Item('cStack') = __StackNew()                                                 ; this stack is used for processing flow control statements (if then/else/end, while/end, do/until)
+	$oDev.Item('rNotice') = ''                                                          ; non empty string to drop notice in rNotices when command and response are complete
+	$oDev.Item('wNotice') = ''                                                          ; any notice tag we are waiting for in this queue
 
 	; async send
 	$oDev.Item('upload') = 0                                                            ; handle of file currently being uploaded
@@ -381,15 +416,17 @@ Func __viMakeInstrument($sIpAddr, $oDev = False)
 
 	; async receive
 	$oDev.Item('rMode') = 0                                                             ; 0=expecting visa data, 1=expecting modbus data
-	$oDev.Item('rExpectedBytes') = 0                                                    ; number of bytes expected
-	$oDev.Item('rHeaderParsed') = False                                                 ; IEEE488.2 header parsed, if it exists
-	$oDev.Item('rHeaderLen') = 0                                                        ; length of the header
+	$oDev.Item('rExpLen') = 0                                                           ; number of bytes expected
+	$oDev.Item('rParse') = -1                                                           ; IEEE488.2 header parsed, if it exists
+	;$oDev.Item('rHeaderLen') = 0                                                       ; length of the header
 	$oDev.Item('rBuf') = Binary("")                                                     ; read buffer
 	$oDev.Item('rCount') = 0                                                            ; number of bytes read
 	$oDev.Item('download') = 0                                                          ; handle of file currently being downloaded
 	$oDev.Item('rdone') = True                                                          ; response done flag is set to true when a response is received
 	$oDev.Item('waitReply') = False                                                     ; flag to wait for reply before sending next command
 	$oDev.Item('rVar') = ""                                                             ; variable name to store result into, or blank to push it onto the return queue
+	$oDev.Item('rExec') = ""                                                            ; expression to execute with returned value, local variable $rv will be the returned value
+
 	;$oDev.Item('rJobActive') = False                                                    ; true if we have an active background visa network read job running
 	;$oDev.Item('rJobBuf') = 0                                                           ; intake buffer for background read job
 	;$oDev.Item('rJobId') = 0                                                            ; jobid of the background reading job
@@ -421,8 +458,7 @@ EndFunc   ;==>__viMakeInstrument
 
 Func __viPrintInstrument($oDev)
 	If Not __IsDictionary($oDev) Then Return
-	;__ConsoleWriteVar($oDev, @CRLF & "  ")
-	__ConsoleWriteVar($oDev, ", ")
+	__ConsolePrintVar($oDev)        ; yes this is correct, leave this uncommented
 	ConsoleWrite(@CRLF)
 EndFunc   ;==>__viPrintInstrument
 
@@ -445,13 +481,10 @@ EndFunc   ;==>__viPrintInstrument
 ; __viConnect($oDev)										ensure connection is established, returns false if fail
 ; __viInitSession($oDev)									for VXI-11 protocol, performs initial settings after opening a new session
 ;
-; __viIsSessionOpen											check if session is connected/open
+; __viIsConnected											check if session is connected/open
 ; __viOpen													open or reopen a session
 ; __viClose($oDev)											close visa session
 ;   __viCloseHandle($hVisa)									close visa handle (close session, resource manager, ...)
-;
-; __viMbOpen(ByRef $oDev)									open modbus connection
-; __viMbClose($oDev)										close modbus connection
 ;
 ; validation functions
 ; __viCheckDLLhandle()										check if visa.dll is open, open if needed
@@ -472,16 +505,17 @@ EndFunc   ;==>__viPrintInstrument
 ; in:		$oDev = visa instrument data structure
 ; out:		return 1 if successful, 0 if failed
 Func __viConnect($oDev)
-	If __viIsSessionOpen($oDev) Then Return True
+	If __viIsConnected($oDev) Then Return True
 	Return __viOpen($oDev)
 EndFunc   ;==>__viConnect
 
 
 
-; 			__viIsSessionOpen
+; 			__viIsConnected
 ; task:		determine if visa session is connected to device
 ; out:		true if either visa session handle is active, or if tcp socket handle is active
-Func __viIsSessionOpen($oDev)
+Func __viIsConnected($oDev)
+	If $oDev.Item('index') = 'main' Then Return True                        ; the unified main script queue does not 'connect' to any individual instrument
 	If $oDev.Item('viIpMode') Then
 		Local $hSocket = $oDev.Item('viSocket')
 		If $hSocket = 0 Then Return False
@@ -502,66 +536,7 @@ Func __viIsSessionOpen($oDev)
 		__viClose($oDev)
 		Return False
 	EndIf
-EndFunc   ;==>__viIsSessionOpen
-
-
-
-; =======================================================================================================================
-; Function Name:    __TCP_IsConnected
-; Description:      Checks if a TCP socket connection is still alive and active without blocking execution.
-; Parameter(s):     $hSocket - The AutoIt TCP socket identifier variable.
-; Return Value(s):  True  - The socket is open and actively connected.
-;                   False - The socket has disconnected, timed out, or encountered a hardware error.
-; =======================================================================================================================
-Func __TCP_IsConnected($hSocket)
-	Local $iSocketID = $hSocket
-	If IsArray($hSocket) Then $iSocketID = $hSocket[0] ; Extract from AutoIt tracking array if needed
-	If Number($iSocketID) <= 0 Then Return False
-
-	; --- STEP 1: FORCE SOCKET INTO NON-BLOCKING MODE ---
-	; FIONBIO constant = 0x8004667E. Mode = 1 (Non-blocking)
-	Local $tMode = DllStructCreate("ulong")
-	DllStructSetData($tMode, 1, 1)
-	DllCall("ws2_32.dll", "int", "ioctlsocket", "handle", $iSocketID, "long", 0x8004667E, "struct*", $tMode)
-	If @error Then Return False
-
-	; --- STEP 2: RUN THE VERIFICATION PEEK VIA WINSOCK RECV ---
-	; MSG_PEEK = 0x02. We use a tiny 1-byte binary buffer target.
-	Local $tBuffer = DllStructCreate("byte")
-	Local $aRecv = DllCall("ws2_32.dll", "int", "recv", _
-			"handle", $iSocketID, _
-			"struct*", $tBuffer, _
-			"int", 1, _
-			"int", 0x02) ; MSG_PEEK
-
-	Local $bConnected = True
-	Local $iError = 0
-
-	If Not @error Then
-		Local $iBytesReturned = $aRecv[0]
-
-		If $iBytesReturned = 0 Then
-			; A clean return of 0 bytes during a read indicates a graceful connection close by the remote host
-			$bConnected = False
-		ElseIf $iBytesReturned = -1 Then
-			; Grab the specific Winsock failure reason code
-			Local $aErr = DllCall("ws2_32.dll", "int", "WSAGetLastError")
-			If Not @error Then $iError = $aErr[0]
-
-			; --- ANALYSIS MATRIX ---
-			; If it throws 10035 (WSAEWOULDBLOCK), the socket is healthy but simply empty!
-			; Any other code (10054 Connection Reset, 10053 Aborted, etc.) means it is dead.
-			If $iError <> 10035 Then $bConnected = False
-		EndIf
-	EndIf
-
-	; --- STEP 3: RESTORE SOCKET BACK TO BLOCKING MODE ---
-	; Mode = 0 (Standard AutoIt blocking behavior)
-	DllStructSetData($tMode, 1, 0)
-	DllCall("ws2_32.dll", "int", "ioctlsocket", "handle", $iSocketID, "long", 0x8004667E, "struct*", $tMode)
-
-	Return $bConnected
-EndFunc   ;==>__TCP_IsConnected
+EndFunc   ;==>__viIsConnected
 
 
 
@@ -636,6 +611,7 @@ EndFunc   ;==>__viInitSession
 ;			if handles are 0 or expired, then reopen
 Func __viCheckDLLhandle()
 	If __IsDllHandleValid($__vi_hDll) Then Return                                     ; if valid then no further action needed
+	If $__vi_hDll <> '' And $__vi_hDll <> 0 Then DllClose($__vi_hDll)
 	$__vi_hDll = DllOpen($__viVisaDll)
 	If @error Then $__vi_hDll = $__viVisaDll
 
@@ -652,12 +628,20 @@ EndFunc   ;==>__viCheckDLLhandle
 
 
 
+; ====================================================================================================
+; Function Name:    __viCheckRMhandle
+; Description:      Maintains a persistent, single-instance global master Resource Manager session block.
+; ====================================================================================================
 ;			confirm visa RM is open
 ; out:		1 if ok, 0 if not open and unable to open
 Func __viCheckRMhandle()
 	__viCheckDLLhandle()
-	If __viIsResourceManagerValid($__vi_hRM) Then Return 1                                 ; if valid then no further action needed
-	Local $aResult = DllCall($__vi_hDll, "long", "viOpenDefaultRM", $__viSysUint32_64ptr, 0)  ; open the visa resource manager
+	If __viIsResourceManagerValid($__vi_hRM) Then Return 1                                      ; if valid then no further action needed
+	If $__vi_hRM <> 0 And $__vi_hRM <> "" Then                                                  ; If it's an orphaned token, clean up via the proper driver DLL allocation context
+		__viCloseHandle($__vi_hRM)    ; DllCall($__vi_hDll, "long", "viClose", $__viSysUint32_64, $__vi_hRM)
+		$__vi_hRM = 0
+	EndIf
+	Local $aResult = DllCall($__vi_hDll, "long", "viOpenDefaultRM", $__viSysUint32_64ptr, 0)    ; open the visa resource manager
 	If @error Then
 		ConsoleWrite("ERROR: 'visa32.dll' not found. Ensure NI-VISA runtime is installed." & @CRLF)
 		Return SetError(@error, 0, 0)
@@ -665,7 +649,7 @@ Func __viCheckRMhandle()
 	Local $iStatus = $aResult[0]
 	If $iStatus < 0 Then
 		ConsoleWrite("ERROR: Could not open Default Resource Manager. Status: 0x" & Hex($iStatus) & @CRLF)
-		Return SetError($iStatus, 0, 0)
+		Return SetError($iStatus, 0, 0)    ;	0xBFFF003C = VI_ERROR_ALLOC - no more system resources available (malloc or something else)
 	EndIf
 	$__vi_hRM = $aResult[1]
 	Return 1
@@ -682,11 +666,12 @@ EndFunc   ;==>__viCheckRMhandle
 Func __viIsResourceManagerValid($hRM, $hDll = $__viVisaDll)
 	If $hRM = 0 Or $hRM = "" Or $hRM = True Or $hRM = False Then Return False           ; 1. Early exit if the variable is empty or a structural boolean flag
 	If Number($hRM) = 0 Then Return False
-	Local $tBuffer = DllStructCreate("char[256]")                                       ; Local buffer allocation to hold string metadata
-	Local $aResult = DllCall($hDll, "long", "viGetAttribute", _                         ; 3. Call viGetAttribute: Pass the RM handle, requested attribute ID, and output destination buffer
+	Local $tAttrState = DllStructCreate($__viSysUint32_64)
+	; Query the RM Session attribute back against the target handle descriptor
+	Local $aResult = DllCall($__vi_hDll, "long", "viGetAttribute", _
 			$__viSysUint32_64, $hRM, _
-			"ulong", $VI_ATTR_RSRC_CLASS, _
-			"struct*", $tBuffer)
+			"ulong", $VI_ATTR_RM_SESSION, _
+			"struct*", $tAttrState)
 	If @error Then Return False                                                         ; 4. If the call failed structurally (e.g., DLL missing or bad signature structure), fail immediately
 	Return ($aResult[0] = 0)                                                            ; 5. Element [0] holds the C function return ViStatus.
 	;																					;    Status 0 (VI_SUCCESS) means the VISA backend successfully authenticated the object handle.
@@ -743,53 +728,6 @@ EndFunc   ;==>__viCloseHandle
 
 
 
-; -----------------------------
-; modbus open/close functions
-
-
-
-
-;			__viMbOpen
-; task:		open tcpsocket for modbus.  if already open, then close and reopen
-; out:		1 if successful, 0 if error
-Func __viMbOpen(ByRef $oDev)
-	If Not __viResolveInstrument($oDev) Then Return 0
-	Local $iErr
-	Local $hSocket = $oDev.Item('mbSocket')
-	If $hSocket Then __viMbClose($oDev)
-	$hSocket = TCPConnect($oDev.Item('ipAddr'), $oDev.Item('mbIpPort'))
-	$iErr = @error
-	If $iErr = 10093 Then
-		TCPStartup()
-		Sleep(50)
-		$hSocket = TCPConnect($oDev.Item('ipAddr'), $oDev.Item('mbIpPort'))
-		$iErr = @error
-	EndIf
-	If $iErr Or $hSocket < 0 Then
-		$oDev.Item('mbSocket') = 0
-		Return SetError($iErr, 0, 0)
-	EndIf
-	$oDev.Item('mbSocket') = $hSocket
-	Return 1
-EndFunc   ;==>__viMbOpen
-
-
-
-;			__viMbClose
-; task:		close tcpsocket used for modbus
-Func __viMbClose($oDev)
-	If __IsDictionary($oDev) Then
-		Local $hSocket = $oDev.Item('mbSocket')
-		If __IsTCPsocket($hSocket) Then TCPCloseSocket($hSocket)
-		$oDev.Item('mbSocket') = 0
-	Else
-		If __IsTCPsocket($oDev) Then TCPCloseSocket($oDev)
-		$oDev = 0
-	EndIf
-EndFunc   ;==>__viMbClose
-
-
-
 
 ; -------------------------------------------------------
 ; toggle between raw socket and vxi-11 communication mode
@@ -800,7 +738,7 @@ EndFunc   ;==>__viMbClose
 ; in:		$viHandle = session handle
 ;			if $oDev is an ip address it will be changed to a session handle
 Func __viToggleMode($oDev)
-	If Not __viIsInstrument($oDev) Then Return                  ; if not an instrument handle then do nothing
+	If Not __viIsInstrument($oDev) Then Return ''               ; if not an instrument handle then do nothing
 	Local $sIdx = $oDev.Item('index')
 	Local $sIpAddr = $oDev.Item('ipAddr')
 	Local $sIpPort = $oDev.Item('viIpPort')
@@ -815,6 +753,7 @@ Func __viToggleMode($oDev)
 	If $sIpPort <> "" Then $sIpPort = ":" & $sIpPort
 	Local $sAddr = ($iMode ? "raw:" : "") & $sIpAddr & $sIpPort
 	__viMakeInstrument($sAddr, $oDev)                           ; overwrite data in oDev with a rebuilt handle
+	Return ''                                                   ; return a blank string for viScripts when evaluated inside "{__viToggleMode($oDev)}"
 EndFunc   ;==>__viToggleMode
 
 
@@ -910,9 +849,16 @@ EndFunc   ;==>__viSetTimeout
 ; __viMbRead($oDev, $sFormat, $iRegAddr)							read a register,  $format=32i,32f,16i,16f for 32/16 bit integer/float
 ; __viMbWrite($oDev, $sFormat, $iRegAddr, $nValue)					write to a register
 ;
+;
+; __viMbConnect(ByRef $oDev)
+; __viMbIsSessionOpen(ByRef $oDev)
+;
+; __viMbOpen(ByRef $oDev)											open modbus connection
+; __viMbClose($oDev)												close modbus connection
+;
 ; __viMbMakeTCPframe($oDev, $bFunc, $iRegisterAddress, $sData)		make the TCP modbus frame
 ; __viMbReadBuf($oDev, $iMaxLen = 1460)								read from the modbus device
-; __viMbExtractNumber($oDev, $bBufAcc, $sFormat)					extract the 32/16 i/f number from the read buffer
+; __viMbDecode($oDev, $bBufAcc, $sFormat)				    	extract the 32/16 i/f number from the read buffer
 ; __viMbW16toFloat16($w16)											extract 16 bit floating point number from 16 bit binary data
 ; __viMbFloat16toW16($nValue)										encode 16 bit float into 16 bit binary
 ; __viMbW32toFloat32($w32)											extract 32 bit floating point number from 32 bit binary
@@ -921,28 +867,30 @@ EndFunc   ;==>__viSetTimeout
 
 
 
+
+
+
 ;				__viMbRead
 ; task:			read a register
 ; in:			$oDev = session handle
 ;				$iRegAddr = register address
-;				$sDataType = 16 or 32 bit, integer or float = [ "16i" "16f" "32i" "32f" ]
+;				$sDataType = "Nt", n=number of 16-bit words, t=type (i=integer, f=float, s=string)
 ; out:			1 if successful or 0 and @error
 ; note:			this only sends the read request, it does not wait for, nor read the response
 Func __viMbRead($oDev, $sFormat, $iRegAddr)
-	If Not __IsDictionary($oDev) Then Return 0
-	Local $sPayload
-	If StringLeft($sFormat, 2) = "16" Then
-		$sPayload = __viMbMakeTCPframe($oDev, 0, $iRegAddr, 1)            ; build request frame (for one 16 bit register)
-	Else
-		$sPayload = __viMbMakeTCPframe($oDev, 0, $iRegAddr, 2)            ; build request frame (for one 32 bit register)
-	EndIf
-
+	If Not __IsDictionary($oDev) Then Return False
+	If Not __viMbConnect($oDev) Then Return False
+	$iRegAddr = Int($iRegAddr)
+	Local $sType = StringRight($sFormat, 1)
+	Local $iN = Int(StringTrimRight($sFormat, 1))
+	Local $sPayload = __viMbMakeTCPframe($oDev, 0, $iRegAddr, $iN)   ; build request frame
 	Local $hSocket = $oDev.Item('mbSocket')
-	If $hSocket = 0 Then
-		If Not __viMbOpen($oDev) Then Return SetError(-1, 0, "")
+	If Not __TCP_IsConnected($hSocket) Then
+		If Not __viMbOpen($oDev) Then Return SetError(-1, 0, False)
 		$hSocket = $oDev.Item('mbSocket')
 	EndIf
-	Return TCPSend($hSocket, Binary($sPayload))                         ; send request
+	If $g_mbPrint Then __ConsolePrintVars("__viMbRead (reg), ", "sFormat", $sFormat, "iRegAddr", $iRegAddr, "sPayload", $sPayload)
+	Return (TCPSend($hSocket, Binary($sPayload)) > 0)                           ; send request
 EndFunc   ;==>__viMbRead
 
 
@@ -950,39 +898,25 @@ EndFunc   ;==>__viMbRead
 ;				__viMbWrite
 ; task:			write a register
 ; in:			$oDev = session handle
-;				$sDataType = 16 or 32 bit, integer or float = [ "16i" "16f" "32i" "32f" ]
+;				$sDataType = "Nt", n=number of 16-bit words, t=type (i=integer, f=float, s=string)
 ;				$iRegAddr = register address
-;				$nValue = value to write to register
-; out:			1 if successful or 0 and @error
-Func __viMbWrite($oDev, $sFormat, $iRegAddr, $nValue)
-	If Not __IsDictionary($oDev) Then Return 0
-	Local $sPayload
-	If StringLeft($sFormat, 2) = "16" Then
-		If StringRight($sFormat, 1) = "f" Then $nValue = __viMbFloat16toW16($nValue)
-		Local $iB1 = Mod(Int($nValue / 0x100), 0x100)
-		Local $iB2 = Mod($nValue, 0x100)
-		$sPayload = __viMbMakeTCPframe($oDev, 1, $iRegAddr, Hex($iB1, 2) & Hex($iB2, 2)) ; build request frame to write
-	Else
-		If StringRight($sFormat, 1) = "f" Then $nValue = __viMbFloat32toW32($nValue)
-		Local $iB1 = Mod(Int(Abs($nValue) / 0x1000000), 0x100) + (($nValue < 0) ? 0x80 : 0)
-		Local $iB2 = Mod(Int(Abs($nValue) / 0x10000), 0x100)
-		Local $iB3 = Mod(Int(Abs($nValue) / 0x100), 0x100)
-		Local $iB4 = Mod(Abs($nValue), 0x100)
-		Local $sHex = ""
-		If $oDev.Item('mbWordOrder') Then
-			$sHex = Hex($iB1, 2) & Hex($iB2, 2) & Hex($iB3, 2) & Hex($iB4, 2)       ; word order: high low
-		Else
-			$sHex = Hex($iB3, 2) & Hex($iB4, 2) & Hex($iB1, 2) & Hex($iB2, 2)       ; word order: low high
-		EndIf
-		$sPayload = __viMbMakeTCPframe($oDev, 1, $iRegAddr, $sHex)                    ; build request frame to write
-	EndIf
+;				$vValue = value or string to write to register
+; out:			true if successful or false and @error
+Func __viMbWrite($oDev, $sFormat, $iRegAddr, $vValue)
+	If Not __IsDictionary($oDev) Then Return False
+	If Not __viMbConnect($oDev) Then Return False
+	$iRegAddr = Int($iRegAddr)
+	Local $sHex = __viMbEncode($oDev, $vValue, $sFormat)          ; encode number into binary hex string
+	Local $sPayload = __viMbMakeTCPframe($oDev, 1, $iRegAddr, $sHex)    ; build request frame to send
 
 	Local $hSocket = $oDev.Item('mbSocket')
-	If $hSocket = 0 Then
-		If Not __viMbOpen($oDev) Then Return SetError(-1, 0, "")
+	If Not __TCP_IsConnected($hSocket) Then
+		If Not __viMbOpen($oDev) Then Return SetError(-1, 0, False)
 		$hSocket = $oDev.Item('mbSocket')
 	EndIf
-	Return TCPSend($hSocket, Binary($sPayload))                                     ; send request
+	If $g_mbPrint Then __ConsolePrintVars("__viMbWrite (reg), ", "sFormat", $sFormat, "iRegAddr", $iRegAddr, "nValue", $vValue, "sPayload", $sPayload, "sHex", $sHex)
+
+	Return (TCPSend($hSocket, Binary($sPayload)) > 0)                               ; send request
 EndFunc   ;==>__viMbWrite
 
 
@@ -1003,7 +937,7 @@ EndFunc   ;==>__viMbWrite
 ; in:		$oDev = session handle
 ;			$bFunc = function 1=write, 0=read
 ;			$iRegisterAddress = register address (Big-Endian)
-;			$sData = (read) number of registers to read
+;			$sData = (read) number of (16-bit) registers to read
 ;				 	 (write) hex string of data payload to write
 ; out:		hex string of the frame to send in the tcp socket
 Func __viMbMakeTCPframe($oDev, $bFunc, $iRegisterAddress, $sData)
@@ -1013,22 +947,20 @@ Func __viMbMakeTCPframe($oDev, $bFunc, $iRegisterAddress, $sData)
 	$oDev.Item('mbTransID') = $iTrans
 	Local $iHiTrans = BitAND(BitShift($iTrans, 8), 0xFF)
 	Local $iLoTrans = BitAND($iTrans, 0xFF)
-
 	Local $iHiRegister = BitAND(BitShift($iRegisterAddress, 8), 0xFF)       ; register address high byte
 	Local $iLoRegister = BitAND($iRegisterAddress, 0xFF)                    ; register address low byte
 	Local Const $protocol = "0000"                                          ; modbus protocol
 	Local Const $unitID = "01"                                              ; unit identifier number
-
-	Local $iDataLen = Int(StringLen($sData) / 2)                            ; number of bytes in payload
+	Local $iDataLen = Int(StringLen($sData) / 2)                            ; number of 16-bit words in payload
 	$bFunc = Number($bFunc)                                                 ; function: read(0) / write(1)
 	Local $iFunction = $bFunc ? 0x10 : 0x03                                 ; use 0x10 = for multiple and single reg write.
-	;Local $iFunction = $bFunc ? (($iDataLen > 2) ? 0x10 : 0x06) : 0x03      ; 0x10 = write multiple regs.  0x06=write single reg.  0x03=read reg(s)
+	;Local $iFunction = $bFunc ? (($iDataLen > 2) ? 0x10 : 0x06) : 0x03      ; do not use 0x06 for F4T.   0x10 = write multiple regs.  0x06=write single reg.  0x03=read reg(s)
 
 	Local $len = 0x0006                                                     ; read packet has len 6 for this field
 	If $bFunc Then $len = 0x07 + $iDataLen                                  ; write packet has additional bytes for payload
 
-	Local $sPayload = "0x" & Hex($iHiTrans, 2) & Hex($iLoTrans, 2) & $protocol & _
-			Hex($len, 4) & $unitID & Hex($iFunction, 2) & _
+	Local $sPayload = "0x" & Hex($iHiTrans, 2) & Hex($iLoTrans, 2) & _      ; build the frame
+			$protocol & Hex($len, 4) & $unitID & Hex($iFunction, 2) & _
 			Hex($iHiRegister, 2) & Hex($iLoRegister, 2)
 
 	If $bFunc Then
@@ -1038,6 +970,79 @@ Func __viMbMakeTCPframe($oDev, $bFunc, $iRegisterAddress, $sData)
 	EndIf
 	Return $sPayload
 EndFunc   ;==>__viMbMakeTCPframe
+
+
+
+
+
+; ----------------------------------
+; mb Open close, connect fucntions
+
+
+
+
+;			__viMbConnect
+; task:		ensure a connection is started
+; in:		$oDev = visa instrument data structure
+; out:		return 1 if successful, 0 if failed
+Func __viMbConnect($oDev)
+	If __viMbIsSessionOpen($oDev) Then Return True
+	Return __viOpen($oDev)
+EndFunc   ;==>__viMbConnect
+
+
+
+; 			__viMbIsSessionOpen
+; task:		determine if visa session is connected to device
+; out:		true if either visa session handle is active, or if tcp socket handle is active
+Func __viMbIsSessionOpen($oDev)
+	Local $hSocket = $oDev.Item('mbSocket')
+	If $hSocket = 0 Then Return False
+	If __TCP_IsConnected($hSocket) Then Return True
+	__viClose($oDev)                                                        ; if not active then make sure it is closed
+	Return False
+EndFunc   ;==>__viMbIsSessionOpen
+
+
+
+;			__viMbOpen
+; task:		open tcpsocket for modbus.  if already open, then close and reopen
+; out:		True if successful, False if error
+Func __viMbOpen(ByRef $oDev)
+	If Not __viResolveInstrument($oDev) Then Return False
+	Local $iErr
+	Local $hSocket = $oDev.Item('mbSocket')
+	If $hSocket Then __viMbClose($oDev)
+	$hSocket = TCPConnect($oDev.Item('ipAddr'), $oDev.Item('mbIpPort'))
+	$iErr = @error
+	If $iErr = 10093 Then
+		TCPStartup()
+		Sleep(50)
+		$hSocket = TCPConnect($oDev.Item('ipAddr'), $oDev.Item('mbIpPort'))
+		$iErr = @error
+	EndIf
+	If $iErr Or $hSocket < 0 Then
+		$oDev.Item('mbSocket') = 0
+		Return SetError($iErr, 0, False)
+	EndIf
+	$oDev.Item('mbSocket') = $hSocket
+	Return True
+EndFunc   ;==>__viMbOpen
+
+
+
+;			__viMbClose
+; task:		close tcpsocket used for modbus
+Func __viMbClose($oDev)
+	If __IsDictionary($oDev) Then
+		Local $hSocket = $oDev.Item('mbSocket')
+		If __IsTCPsocket($hSocket) Then TCPCloseSocket($hSocket)
+		$oDev.Item('mbSocket') = 0
+	Else
+		If __IsTCPsocket($oDev) Then TCPCloseSocket($oDev)
+		$oDev = 0
+	EndIf
+EndFunc   ;==>__viMbClose
 
 
 
@@ -1053,57 +1058,92 @@ EndFunc   ;==>__viMbMakeTCPframe
 ; in:		$oDev = session handle
 ;			$iMaxLen = max number of bytes to read (default to one ethernet frame max size)
 ; out:		any data read as a binary data object
+;
+; note:		following behavior of __viReadBuf we do not reopen the connection if it is closed, we just return error code
 Func __viMbReadBuf($oDev, $iMaxLen = 1460)
-	If Not __IsDictionary($oDev) Then Return SetError(-1, 0, Binary(""))
-	Local $iErr, $iStatus, $bR
+	Local $bR = Binary("")
+	If Not __IsDictionary($oDev) Then Return SetError(-1, 0, $bR)
+	Local $iErr, $iStatus
 	Local $hSocket = $oDev.Item('mbSocket')
-	If Not __IsTCPsocket($hSocket) Then Return SetError(-1, 0, Binary(""))
-	If Not __TCP_IsDataAvailable($hSocket) Then Return Binary("")
+	If Not __IsTCPsocket($hSocket) Then Return SetError(-1, 0, $bR)
+	If Not __TCP_IsDataAvailable($hSocket) Then Return $bR
 	$bR = TCPRecv($hSocket, 64, 1)
 	$iErr = @error
 	If $iErr = 10093 Then
 		TCPStartup()
 		Sleep(50)
-		__viMbOpen($oDev)
-		If Not __TCP_IsDataAvailable($hSocket) Then Return Binary("")
+		If Not __viMbOpen($oDev) Then Return SetError(-1, 0, $bR)
+		If Not __TCP_IsDataAvailable($hSocket) Then Return $bR
 		$bR = TCPRecv($hSocket, 64, 1)
 		$iErr = @error
 	EndIf
+
+	If $g_mbPrint Then __ConsolePrintVars("__viMbReadBuf, ", "bR", $bR, "iErr", $iErr)
 	Return SetError($iErr, 0, $bR)
 EndFunc   ;==>__viMbReadBuf
 
 
 
 
-;			__viMbExtractNumber
+;			__viMbDecode
 ; task:		extract number from a register read reply modbus frame
 ; in:		$oDev = session handle
 ;			$bBufAcc = just the payload data from the modbus frame
-;			$sFormat = 32i, 32f, 16i, 16f for 32 or 16 bit number, integer or floating point
+;			$sFormat = 32i, 32f, 16i, 16f for 32 or 16 bit number, integer or floating point.  or Ns where N=number of bytes and s is string
 ; out:		number extracted from the payload data
-Func __viMbExtractNumber($oDev, $bBufAcc, $sFormat)
-	Local $vR
-	If StringLeft($sFormat, 2) = "16" Then
-		Local $iB1 = Int(BinaryMid($bBufAcc, 1, 1))
-		Local $iB2 = Int(BinaryMid($bBufAcc, 2, 1))
-		$vR = ($iB1 * 256) + $iB2
-		If StringRight($sFormat, 1) = "f" Then $vR = __viMbW16toFloat16($vR)            ; if float interpretation then convert to float
+Func __viMbDecode($oDev, $bBufAcc, $sFormat)                                            ; decode a number of string from modbus packet payload
+	If ($g_mbPrint Or $g_mbPrintDecode Or $g_mbPrintDecodeString) And StringRight($sFormat, 1) = "s" Then __ConsolePrintVars("__viMbDecode, " & @CRLF, "cmd", $oDev.Item('cmd'), "bBufAcc", $bBufAcc, "sBufAcc", BinaryToString($bBufAcc, 4))
+	If StringRight($sFormat, 1) = "s" Then Return BinaryToString($bBufAcc, $SB_UTF16BE)
+	Local $iN = Int(StringTrimRight($sFormat, 1))
+	Local $iB1 = Int(BinaryMid($bBufAcc, 1, 1))
+	Local $iB2 = Int(BinaryMid($bBufAcc, 2, 1))
+	Local $nV = ($iB1 * 256) + $iB2
+	Local $iW1 = $nV, $iW2
+	If $iN = "1" Then
+		If StringRight($sFormat, 1) = "f" Then $nV = __viMbW16toFloat16($nV)            ; if float interpretation then convert to float
 	Else
-		Local $iB1 = Int(BinaryMid($bBufAcc, 1, 1))                                     ; extract register value from response
-		Local $iB2 = Int(BinaryMid($bBufAcc, 2, 1))
-		Local $iB3 = Int(BinaryMid($bBufAcc, 3, 1))
-		Local $iB4 = Int(BinaryMid($bBufAcc, 4, 1))
-		If $oDev.Item('mbWordOrder') Then
-			$vR = ($iB1 * 16777216) + ($iB2 * 65536) + ($iB3 * 256) + $iB4              ; word order: high low
+		$iB1 = Int(BinaryMid($bBufAcc, 3, 1))
+		$iB2 = Int(BinaryMid($bBufAcc, 4, 1))
+		$iW2 = ($iB1 * 256) + $iB2
+		If $oDev.Item('f4tWordOrder') Then
+			$nV = ($nV * 65536) + $iW2                                                  ; word order: high low
 		Else
-			$vR = ($iB3 * 16777216) + ($iB4 * 65536) + ($iB1 * 256) + $iB2              ; word order: low high (default)
+			$nV = ($iW2 * 65536) + $nV                                                  ; word order: low high (default)
 		EndIf
-		If StringRight($sFormat, 1) = "f" Then $vR = __viMbW32toFloat32($vR)            ; if float interpretation then convert to float
+		If StringRight($sFormat, 1) = "f" Then $nV = __viMbW32toFloat32($nV)            ; if float interpretation then convert to float
 	EndIf
-	Return $vR
-EndFunc   ;==>__viMbExtractNumber
+	If $g_mbPrint Or $g_mbPrintDecode Then __ConsolePrintVars("__viMbDecode, ", "bBufAcc", $bBufAcc, "sFormat", $sFormat, "iW1", Hex($iW1, 4), "iW2", Hex($iW2, 4), "nV", $nV)
+	Return Number($nV)
+EndFunc   ;==>__viMbDecode
 
 
+Func __viMbEncode($oDev, $vValue, $sFormat)                                             ; encode a 32 or 16 bit int or float into a binary register value, returns hex digits
+	If IsString($vValue) And StringRight($sFormat, 1) = "s" Then
+		Local $s = StringTrimLeft(String(StringToBinary($vValue, 4)), 2)                ; convert string to hexidecmal encoding
+		If Mod(StringLen($s), 4) Then $s &= "00"                                        ; ensure string is a multiple of 16-bit words
+		Return $s
+	EndIf
+	Local $iN = Int(StringTrimRight($sFormat, 1))
+	Local $sType = StringRight($sFormat, 1)
+	If $g_mbPrint Or $g_mbPrintDecode Then __ConsolePrintVars("__viMbEncode, ", "nValue", $vValue, "sFormat", $sFormat)
+	If $sType = "f" Then                                                                ; if needed then encode float into int
+		If $iN = 16 Then
+			$vValue = __viMbFloat16toW16($vValue)
+		Else
+			$vValue = __viMbFloat32toW32($vValue)
+		EndIf
+	EndIf
+	Local $sHex = Hex($vValue, 8)
+	Local $sW1 = StringLeft($sHex, 4)
+	Local $sW2 = StringRight($sHex, 4)
+	If $iN = "1" Then
+		$sHex = $sW2                                                                    ; if only 16 bit then grab low word
+	Else
+		If Not $oDev.Item('f4tWordOrder') Then $sHex = $sW2 & $sW1                       ; if word order is low-high then swap words
+	EndIf
+	If $g_mbPrint Or $g_mbPrintDecode Then __ConsolePrintVars("__viMbEncode, ", "sW1", $sW1, "sW2", $sW2, "sHex", $sHex)
+	Return $sHex
+EndFunc   ;==>__viMbEncode
 
 
 
@@ -1117,6 +1157,7 @@ EndFunc   ;==>__viMbExtractNumber
 ;				W16toFloat16
 ; task:			convert 16 bit binary data into a 16 bit floating point number
 Func __viMbW16toFloat16($w16)
+	$w16 = Int($w16)
 	Local $iSign = (BitAND($w16, 0x8000) = 0) ? 1 : -1
 	Local $iExponent = BitShift(BitAND($w16, 0x7C00), 10)
 	Local $iMantissa = BitAND($w16, 0x03FF)
@@ -1137,6 +1178,7 @@ EndFunc   ;==>__viMbW16toFloat16
 ;				Float16toW16
 ; task:			convert a floating point number into a 16 bit binary data (stored as int16)
 Func __viMbFloat16toW16($nValue)
+	$nValue = Number($nValue)
 	Local $iSign = ($nValue < 0) ? 1 : 0
 	Local $nAbsVal = Abs($nValue)
 	Local $iExponent = 0
@@ -1152,6 +1194,7 @@ EndFunc   ;==>__viMbFloat16toW16
 ;				W32toFloat32
 ; task:			convert 32 bit binary data into a 32 bit floating point number
 Func __viMbW32toFloat32($w32)
+	$w32 = Int($w32)
 	Local $iSign = (BitAND($w32, 0x80000000) = 0) ? 1 : -1
 	Local $iExponent = BitShift(BitAND($w32, 0x7F800000), 23)
 	Local $iMantissa = BitAND($w32, 0x007FFFFF)
@@ -1172,6 +1215,7 @@ EndFunc   ;==>__viMbW32toFloat32
 ;				Float32toW32
 ; task:			convert a floating point number into a 32 bit binary data (stored as int32)
 Func __viMbFloat32toW32($nValue)
+	$nValue = Number($nValue)
 	Local $iSign = ($nValue < 0) ? 1 : 0
 	Local $nAbsVal = Abs($nValue)
 	Local $iExponent = 0
@@ -1179,7 +1223,9 @@ Func __viMbFloat32toW32($nValue)
 	$iExponent = Floor(Log($nAbsVal) / Log(2))
 	Local $nMantissa = ($nAbsVal / (2 ^ $iExponent)) - 1
 	Local $iMantissaInt = Round($nMantissa * 0x800000)
-	Return (($iSign * 0x80000000) + (BitAND($iExponent + 127, 0xFF) * 0x800000) + BitAND($iMantissaInt, 0x007FFFFF))
+	Local $r = Int(($iSign * 0x80000000) + (BitAND($iExponent + 127, 0xFF) * 0x800000) + BitAND($iMantissaInt, 0x007FFFFF))
+	;__ConsolePrintVars("__viMbFloat32toW32, ", "nValue", $nValue, "r", Hex($r))
+	Return $r
 EndFunc   ;==>__viMbFloat32toW32
 
 
@@ -1216,7 +1262,7 @@ EndFunc   ;==>__viMbFloat32toW32
 ;   __viLoopWrite($oDev)														send chunks of file output when uploading a file to VISA device
 ;   __viLoopExec($oDev)															execute next queued VISA request when prior one is finished
 ;     __viReqSend($oDev, $sReq, $retry = 1)										send VISA request to device
-;     __viEvalExprStrs($sText)										            convert "{expr}" into evaluated expr using autoit Execute(expr)
+;     __viEvalExprStrs($sText,$oDev)								            convert "{expr}" into evaluated expr using autoit Execute(expr)
 ; __viWriteBuf($oDev, $sReq)													send one chunk of data to the visa device
 ;   __viWriteDll($oDev, ByRef $tBuf, $iLen)										dll call to visaNN.dll
 ; __viReadBuf($oDev, $iMaxLen = 1460)											read one chunk of data from the visa device
@@ -1236,14 +1282,18 @@ EndFunc   ;==>__viMbFloat32toW32
 ;
 
 
+; -------------------------------------------------------------
+; main loop functions - service background processes
+
+
 
 ; -------------------------------------------------------------
 ; main loop function - service background processes
 Func __viLoop()
-	If Not __IsDictionary($g_oViInstruments) Then Return
+	If Not __IsDictionary($g_oViDevs) Then Return
 	Local $oDev, $sKey
-	For $sKey In $g_oViInstruments
-		$oDev = $g_oViInstruments.Item($sKey)
+	For $sKey In $g_oViDevs
+		$oDev = $g_oViDevs.Item($sKey)
 		If Not __viIsInstrument($oDev) Then ContinueLoop
 		__viLoopExec($oDev)                                                 ;   if ready then send next command from queue
 		Local $hFile = $oDev.Item('upload')
@@ -1258,22 +1308,36 @@ EndFunc   ;==>__viLoop
 ; task:		check for incomming visa data/messages and read one buffer at a time
 ;			set internal variables and flags for updated status
 Func __viLoopRead($oDev)
+	Local $tBuf = $oDev.Item('wNotice')
+	If $tBuf <> "" Then                                                                 ; if we are waiting on a notice then
+		If Not $g_oNotices.Exists($tBuf) Then Return                                    ;   if notice not arrived yet then return - wait for it to come
+		$tBuf = $g_oNotices.Item($tBuf)
+		If IsKeyword($tBuf) = 0 Then __viRetQueuePush($oDev, $tBuf, 0)                  ;   if response received then push it onto return queue
+		$oDev.Item('rdone') = True                                                      ;   signal main/client code that we have a newly received message
+		__viLoopExecReqComplete($oDev)                                                  ;   signal request/command is complete
+		$oDev.Item('waitReply') = False                                                 ;   signal cmd that it has received reply and can move to next command
+		$oDev.Item('wNotice') = ''                                                      ;   reset wNotice flag so we do not spinlock forever
+		Return                                                                          ;   return.  we are done processing here
+	EndIf                                                                               ; end if.  proceed below for non-'wNotice' related processing
+
+
 	Local $bModbus = $oDev.Item('rMode')                                                ; what type of reply are we expecting (modbus or visa)
-	Local $aRet, $iStatus, $tBuf, $iRetCount
+	Local $aRet, $iStatus, $iRetCount
 
 	If $bModbus Then                                                                    ; if in a modbus command then read modbus tcp port
 		$tBuf = __viMbReadBuf($oDev)                                                    ;   read a chunk of data from modbus port
 		$iStatus = 1                                                                    ;   1 If Not done, 0 If done
 	Else                                                                                ; else we are in a visa command, read visa port
-		$aRet = __viReadBuf($oDev)                                                      ;   read a chunk of data from visa port
+		$aRet = __viReadBuf($oDev, 0x10000)                                             ;   read a chunk of data from visa port
 		$iStatus = $aRet[0]
 		$tBuf = $aRet[1]
+		;__ConsolePrintVars("__viLoopRead, ", "iStatus", $iStatus, "tBuf", String($tBuf))
 	EndIf
 	$iRetCount = BinaryLen($tBuf)
 
 	If $iRetCount <= 0 Then                                                             ; if nothing received then check timeout and return
 		If Not $oDev.Item('waitReply') Then Return                                      ; if not waiting for a reply then return
-		If TimerDiff($oDev.Item('timer')) < $oDev.Item('timeout') Then Return              ; if no timeout yet then return
+		If TimerDiff($oDev.Item('timer')) < $oDev.Item('timeout') Then Return           ; if no timeout yet then return
 		$iStatus = -1073807339                                                          ; set status flag for timeout
 	EndIf
 
@@ -1282,7 +1346,7 @@ Func __viLoopRead($oDev)
 	Local $bLeftOvers = Binary("")
 
 	If $iRetCount > 0 Then                                                              ; if received data then process it
-		Local $iExpectedBytes = $oDev.Item('rExpectedBytes')
+		Local $iExpLen = $oDev.Item('rExpLen')
 		Local $iReadCount = $oDev.Item('rCount')
 
 		$bBufAcc = Binary($bBufAcc & $tBuf)                                             ; add new bytes to buffer
@@ -1291,70 +1355,84 @@ Func __viLoopRead($oDev)
 		$oDev.Item('rCount') = $iReadCount
 		$oDev.Item('timer') = TimerInit()                                               ; reset timeout timer
 		If $bModbus Then                                                                ; receiving MODBUS TCP frame
-			If $iExpectedBytes < 0 Then                                                 ; check to see if we received the entire modbus frame
+			If $iExpLen <= 0 Then                                                       ; check to see if we received the entire modbus frame
 				If $iReadCount >= 6 Then                                                ; read frame length field
-					$iExpectedBytes = 6 + Int(BinaryMid($bBufAcc, 5, 1)) * 0x100 + Int(BinaryMid($bBufAcc, 6, 1))          ; total number of expected bytes
-					$oDev.Item('rExpectedBytes') = $iExpectedBytes
+					$iExpLen = 6 + Int(BinaryMid($bBufAcc, 5, 1)) * 0x100 + Int(BinaryMid($bBufAcc, 6, 1))          ; total number of expected bytes
+					$oDev.Item('rExpLen') = $iExpLen
 				EndIf
 			EndIf
-			If $iReadCount >= $iExpectedBytes Then $iStatus = 0                         ; if full frame received then set iStatus to 0 (ok), else leave it at 1 (needs more)
+			If $iExpLen > 0 Then
+				If $iReadCount >= $iExpLen Then $iStatus = 0                            ; if full frame received then set iStatus to 0 (ok), else leave it at 1 (needs more)
+			EndIf
+			If $g_mbPrint Then __ConsolePrintVars("__viLoopRead modbus, ", "iReadCount", $iReadCount, "iExpLen", $iExpLen, "iStatus", $iStatus)
+
 		Else                                                                            ; Receiving VISA SCPI data
-			Local $bHeaderParsed = $oDev.Item('rHeaderParsed')
-			Local $iHeaderLen = Int($oDev.Item('rHeaderLen'))
+			Local $iParse = $oDev.Item('rParse')
+			;Local $iHeaderLen = Int($oDev.Item('rHeaderLen'))
 
-			If Not $bHeaderParsed And Number($iHeaderLen) <= 0 And $iReadCount >= 1 Then        ; dynamic parsing for IEEE 488.2 header
-				If Int(BinaryMid($bBufAcc, 1, 1)) = 0x23 Then                                   ; 0x23 = "#"
-					If $iReadCount >= 2 Then
-						$iHeaderLen = Int(BinaryMid($bBufAcc, 2, 1)) - 0x30                     ; convert ascii digit to integer number
-						$oDev.Item('rHeaderLen') = $iHeaderLen
-						If Not $iHeaderLen Then
-							$bHeaderParsed = True
-							$oDev.Item('rHeaderParsed') = True
-						EndIf
-					EndIf
-				Else
-					$bHeaderParsed = True
-					$oDev.Item('rHeaderParsed') = True
-					$iHeaderLen = 0
-					$oDev.Item('rHeaderLen') = 0
-				EndIf
+			If $iParse < 0 And $iReadCount >= 1 Then                                    ; dynamic parsing for IEEE 488.2 header
+				If Int(BinaryMid($bBufAcc, 1, 1)) <> 0x23 Then                          ; if not IEEE488.2 header marker then 0x23 = "#"
+					$iParse = 11                                                        ;   iParse = 11 - no header found
+					$oDev.Item('rParse') = 11
+				Else                                                                    ; else IEEE488.2 header marker "#" found
+					If $iReadCount >= 2 Then                                            ;   if at least 2 bytes received then
+						$iParse = Int(BinaryMid($bBufAcc, 2, 1)) - 0x30                 ;     convert byte 2 from ascii digit to integer number
+						If $iParse < 0 Or 9 < $iParse Then                              ;     if not a valid digit then
+							$iParse = 11                                                ;       iParse = 11 - no header found
+							$oDev.Item('rParse') = 11                                   ;
+						EndIf                                                           ;     end if
+						;__ConsolePrintVars("__viLoopRead, ", "iParse", $iParse)
+					EndIf                                                               ;   end if
+				EndIf                                                                   ; end if
 			EndIf
 
-			If Not $bHeaderParsed Then
-				If $iReadCount >= $iHeaderLen + 2 Then                      ; if IEEE 488.2 header found and fully received then decode and remove it from the buffer
-					Local $iPayloadSize = Int(BinaryToString(BinaryMid($bBufAcc, 3, $iHeaderLen), 1))
-					$iHeaderLen = 1 + 1 + $iHeaderLen
-					$iExpectedBytes = $iHeaderLen + $iPayloadSize           ; Total block footprint = '#' symbol (1) + digit counter (1) + size digits + raw payload
-					$oDev.Item('rExpectedBytes') = $iExpectedBytes
-					$bBufAcc = BinaryMid($bBufAcc, $iHeaderLen + 1)         ; strip IEEE 488.2 header
-					$bHeaderParsed = True
-					$oDev.Item('rHeaderParsed') = True
-				EndIf
-			EndIf
+			If 0 <= $iParse And $iParse <= 9 Then                                       ; if still processing IEEE488.2 header and we have the header length then
+				If $iReadCount >= $iParse + 2 Then                                      ;   if IEEE 488.2 header found and fully received then decode and remove it from the buffer
+					If $iParse = 0 Then                                                 ;     if header is "#0" then
+						$iParse = 10                                                    ;       signal that header is found and parsed
+						$oDev.Item('rParse') = 10
+						$iExpLen = 0                                                    ;       iExpLen = 0 to signal that we parsed the header but we do not have an expected byte count
+						$bBufAcc = BinaryMid($bBufAcc, 3)                               ;       strip "#0" header from the buffer
+					Else                                                                ;     else we have a number of digits to extract for the expected payload length
+						Local $iPayloadLen = BinaryToString(BinaryMid($bBufAcc, 3, $iParse), 1)
+						If StringIsDigit($iPayloadLen) Then                             ;       if PayloadLen is a valid set of digits then
+							$iExpLen = 1 + 1 + $iParse + Int($iPayloadLen)              ;         calculate the expected length of data to receive
+							$oDev.Item('rExpLen') = $iExpLen                            ;         Total block footprint = '#' symbol (1) + digit counter (1) + size digits + raw payload
+							$bBufAcc = BinaryMid($bBufAcc, $iParse + 3)                 ;         strip IEEE 488.2 header from the buffer
+							$iParse = 10                                                ;         set iParse=10 to signal a good header found and iExpLen is the expected bytecount for iReadCount
+							$oDev.Item('rParse') = 10
+						Else                                                            ;       else header invalid
+							$iParse = 11                                                ;         set iParse=11 to signal no header found
+							$oDev.Item('rParse') = 11
+						EndIf                                                           ;       end if
+					EndIf                                                               ;     end if
+				EndIf                                                                   ;   end if
+			EndIf                                                                       ; end if
 
-			If $oDev.Item('viIpMode') Then                                  ; if in raw socket mode then
-				If Not $bHeaderParsed Or Not $iHeaderLen Then               ;   if IEEE488.2 not found then
-					Local $sBufAcc = BinaryToString($bBufAcc)
-					Local $iLFpos = StringInStr($sBufAcc, @LF)              ;     look for LF end of visa message marker
-					If $iLFpos Then
+			; raw mode check for end of message
+			If $oDev.Item('viIpMode') Then                                              ; if in raw socket mode then
+				If $iParse = 11 Then                                                    ;   if buffer processed for IEEE488.2 header but header not valid or not found then
+					Local $sBuf = BinaryToString($bBufAcc)                              ;     look for LF end of visa message marker
+					Local $iLFpos = StringInStr($sBuf, @LF)                             ;
+					If $iLFpos Then                                                     ;     if LF found then
 						Local $iLFposBefore = $iLFpos - 1
-						If StringMid($sBufAcc, $iLFposBefore, 1) = @CR Then $iLFposBefore -= 1
+						If StringMid($sBuf, $iLFposBefore, 1) = @CR Then $iLFposBefore -= 1
 						$iLFpos += 1
-						If $iReadCount > $iLFpos Then _                     ;   save the left over data accumulated
+						If $iReadCount > $iLFpos Then _                                 ;       save the left over data accumulated
 								$bLeftOvers = BinaryMid($bBufAcc, $iLFpos)
-						$bBufAcc = BinaryMid($bBufAcc, 1, $iLFposBefore)    ;   drop the CR and LF and any data accidentally read after it
-						$iStatus = 0                                        ;   successful completion of receiving visa data
-					EndIf
-				EndIf
-			EndIf
+						$bBufAcc = BinaryMid($bBufAcc, 1, $iLFposBefore)                ;       drop the CR and LF and any data accidentally read after it
+						$iStatus = 0                                                    ;       successful completion of receiving visa data
+					EndIf                                                               ;     end if
+				EndIf                                                                   ;   end if
+			EndIf                                                                       ; end if
 
 			If $g_viPrintLoopRead Then
 				ConsoleWrite(@CRLF)
-				__ConsolePrintVar("__viLoopRead", "bBufAcc", $bBufAcc, "iReadCount", $iReadCount, "bHeaderParsed", $bHeaderParsed, _
-						"iHeaderLen", $iHeaderLen, "iExpectedBytes", $iExpectedBytes, "oDev", $oDev)
+				__ConsolePrintVars("__viLoopRead, ", "bBufAcc", $bBufAcc, "iReadCount", $iReadCount, "iParsed", $iParse, _
+						"iExpLen", $iExpLen, "oDev", $oDev)
 			EndIf
 
-			If $hFile <> 0 And $bHeaderParsed Then                          ; write data to file instead of storing in buffer
+			If $hFile <> 0 And $iParse Then                                  ; write data to file instead of storing in buffer
 				If $hFile > 0 Then
 					FileWrite($hFile, $bBufAcc)
 					If @error Then $iStatus = -1
@@ -1363,36 +1441,49 @@ Func __viLoopRead($oDev)
 				$bBufAcc = Binary("")
 			EndIf
 
-			If $iReadCount >= 0x100000000 Then $iStatus = -3                ; buffer overflow
-			If $bHeaderParsed And $iHeaderLen And ($iReadCount >= $iExpectedBytes) Then $iStatus = 0 ; if IEEE488.2 header, then stop when we receive all expected bytes
+			If $iReadCount >= 0x100000000 Then $iStatus = -3                ; buffer overflow, using an artificial buffer limit here
+
+			; check if we received enough data to reach IEEE488.2 header expected bytes
+			If $iParse = 10 And $iExpLen > 0 And $iReadCount >= $iExpLen Then ; if we have a parsed header, and the expected payload length is > 0 and we have received enough data then
+				If $iReadCount > $iExpLen Then                              ;   save the left over data accumulated
+					$bLeftOvers = BinaryMid($bBufAcc, $iExpLen + 1)
+					If Int(BinaryMid($bLeftOvers, 1, 1)) = 0x0D Then $bLeftOvers = BinaryMid($bLeftOvers, 2)    ; strip terminating CR from buffer
+					If Int(BinaryMid($bLeftOvers, 1, 1)) = 0x0A Then $bLeftOvers = BinaryMid($bLeftOvers, 2)    ; strip terminating LF from buffer
+					$bBufAcc = BinaryMid($bBufAcc, 1, $iExpLen)
+				EndIf
+				$iStatus = 0                                                ;   stop as we received all expected bytes
+			EndIf                                                           ; end if
 		EndIf
 	EndIf
 
 	If $iStatus <= 0 Then                                                   ; done reading response - 0=success, negative=error
 		If $bModbus Then
 			If $iStatus = 0 Then                                            ; if successfully received frame
-				If $iReadCount > $iExpectedBytes Then $bLeftOvers = BinaryMid($bBufAcc, $iExpectedBytes + 1, $iReadCount - $iExpectedBytes)
+				If $iReadCount > $iExpLen Then $bLeftOvers = BinaryMid($bBufAcc, $iExpLen + 1, $iReadCount - $iExpLen)
 				Local $iCount = Int(BinaryMid($bBufAcc, 9, 1))
-				If $iCount > $iExpectedBytes - 9 Then $iCount = $iExpectedBytes - 9
+				If $iCount > $iExpLen - 9 Then $iCount = $iExpLen - 9
 				$bBufAcc = BinaryMid($bBufAcc, 10, $iCount)                 ; strip the frame header, leaving only the payload data
 				Local $aCmd = StringSplit($oDev.Item('cmd'), " ")
-				If UBound($aCmd) >= 3 Then $bBufAcc = __viMbExtractNumber($oDev, $bBufAcc, $aCmd[2])
+				;__ConsolePrintVars("__viMbLoopRead bModbus=1, ", "aCmd", $aCmd)
+				If $aCmd[0] >= 3 Then $bBufAcc = __viMbDecode($oDev, $bBufAcc, $aCmd[3])
 			Else
 				$bBufAcc = Binary("")                                       ; just in case we have error, set reply data to empty
 			EndIf
 		Else
-			If $hFile Then FileClose($hFile)                                ; close the file if response written to file
-			$oDev.Item('download') = 0
+			If $hFile Then
+				FileClose($hFile)                                           ; close the file if response written to file
+				$oDev.Item('download') = 0
+			EndIf
 		EndIf
 		If Not $hFile Then __viRetQueuePush($oDev, $bBufAcc, $iStatus)      ; push response/reply into return queue
-		$oDev.Item('rHeaderParsed') = False                                 ; reinitialize settings to look for next incomming data
-		$oDev.Item('rHeaderLen') = 0
-		$oDev.Item('rExpectedBytes') = -1
+		$oDev.Item('rParse') = -1                                           ; reinitialize settings to look for next incomming data
+		;$oDev.Item('rHeaderLen') = 0
+		$oDev.Item('rExpLen') = -1
 		$oDev.Item('rBuf') = $bLeftOvers
 		$oDev.Item('rCount') = BinaryLen($bLeftOvers)
-		$oDev.Item('rdone') = True                                          ; signal main code that we have a newly received message
-		$oDev.Item('waitReply') = False                                     ; signal cmd that it has received message and can move to next command
-		$oDev.Item('reqdone') = True                                        ; signal request/command is complete
+		$oDev.Item('rdone') = True                                          ; signal main/client code that we have a newly received message
+		__viLoopExecReqComplete($oDev)                                      ; signal request/command is complete
+		$oDev.Item('waitReply') = False                                     ; signal cmd that it has received reply and can move to next command
 	EndIf
 EndFunc   ;==>__viLoopRead
 
@@ -1418,7 +1509,7 @@ Func __viLoopWrite($oDev, $hFile)
 		$oDev.Item('creturn') = __viWriteBuf($oDev, @CRLF)      ;   send terminate characters to the visa transmission
 		$oDev.Item('cdone') = True
 		If Not $oDev.Item('waitReply') Then _                   ;   if no reply needed, then raise the request done flag
-				$oDev.Item('reqdone') = True
+				__viLoopExecReqComplete($oDev)
 	EndIf                                                       ; endif
 EndFunc   ;==>__viLoopWrite
 
@@ -1447,8 +1538,7 @@ Func __viLoopExec($oDev)
 	Local $oStack = $oDev.Item('cStack')                                                ; stack for flow control commands
 	Local $bQreqEmpty = __pQueIsEmpty($oDev.Item('qreq'))
 
-	;__ConsoleWriteVar($oDev, ", ", "__viLoopExecStack oDev")            ; debug
-	;__ConsoleWriteVar($oStack, ", ", "__viLoopExecStack oStack")        ; debug
+	;__ConsolePrintVars("__viLoopExec, ", "oDev", $oDev, "oStack", $oStack)        ; debug
 
 	#cs
 		behavior of __viLoopExecStack
@@ -1465,22 +1555,13 @@ Func __viLoopExec($oDev)
 	Do
 		$oStackTop = __StackPeek($oStack)
 
-		;ConsoleWrite(@CRLF & @CRLF)
-		;__ConsoleWriteVar($oStack, ", ", "__viLoopExec oStack")
-		;__ConsoleWriteVar($oStackTop, ", ", "__viLoopExec oStackTop")
-
 		$bLoopExit = True
 		If __DequeIsDeque($oStackTop) Then $bLoopExit = __pQueIsParked($oStackTop)
-		;__ConsoleWriteVar($bLoopExit, ", ", "__viLoopExec bLoopExit")
 		If $bLoopExit Then                                                                  ; if cStack is empty or the pQue on the top of the stack is parked then
 			If $bQreqEmpty Then Return __viLoopExecClose($oDev)                             ;   if no more commands in qreq and cStack is empty then close connection and return 1 (ok)
 			$aReq = __viReqQueuePop($oDev)                                                  ;   pull next command to process from main queue
 			ExitLoop                                                                        ;   jump to command processing
 		EndIf                                                                               ; end if
-
-		;ConsoleWrite(@CRLF & @CRLF & "Unparked queue - processing stack" & @CRLF)
-		;__ConsoleWriteVar($oStack, ", ", "__viLoopExec oStack")
-		;__ConsoleWriteVar($oStackTop, ", ", "__viLoopExec oStackTop")
 
 		If __pQueIsStart($oStackTop) Then                                                   ; if we just started processing the oStackTop queue then
 			$sCmd = __pQueCmd($oStackTop)                                                   ;   $sCmd = the command that created this block
@@ -1488,33 +1569,33 @@ Func __viLoopExec($oDev)
 			If $sCmd = "else" Then                                                          ;   if it is an 'else' block then
 				$bCond = $bSkipElse                                                         ;     if previous 'if/then' block executed then we skip this 'else' block
 				If $g_viPrintpQueCond Then _
-						__ConsoleWriteVar(Not $bCond, ", ", "__viLoopExecStack else cond")
+						__ConsolePrintVars("__viLoopExecStack, ", "else cond", Not $bCond)
 
 			ElseIf $sCmd = "if" Then                                                        ;   else if it is an 'if/then' block then
-				$bCond = __viEvalExpr(__pQueCond($oStackTop))                               ;     evaluate the loop condition and if false then exit the block
+				$bCond = __viEvalExpr(__pQueCond($oStackTop), $oDev)                        ;     evaluate the loop condition and if false then exit the block
 				$oStackTop.Item('bCond') = $bCond
 				If $g_viPrintpQueCond Then _
-						__ConsoleWriteVar(__pQueCond($oStackTop), ", ", _
-						"__viLoopExecStack if cond '" & $bCond & "'")
+						__ConsolePrintVars("__viLoopExecStack, ", "if cond " & $bCond, __pQueCond($oStackTop))
 				$bCond = Not $bCond
 
 			ElseIf $sCmd = "while" Then                                                     ;   else if it is a 'while' block then
-				$bCond = Not __viEvalExpr(__pQueCond($oStackTop))                           ;     evaluate the loop condition and if false then exit the block
+				$bCond = Not __viEvalExpr(__pQueCond($oStackTop), $oDev)                    ;     evaluate the loop condition and if false then exit the block
 				If $g_viPrintpQueCond Then _
-						__ConsoleWriteVar(__pQueCond($oStackTop), ", ", _
-						"__viLoopExecStack while cond '" & Not $bCond & "'")
+						__ConsolePrintVars("__viLoopExecStack, ", "while cond " & (Not $bCond), __pQueCond($oStackTop))
 
 			EndIf                                                                           ;   end if
+
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $sCmd & " (" & (Not $bCond) & ")" & @CRLF)
+
 			If $bCond Then                                                                  ;   if condition is true then
-				__StackPop($oStack)                                                         ;     exit the block
+				__viLoopExecStackPop($oStack, $oDev)                                        ;     exit the block
 				ContinueLoop                                                                ;     loop back and recheck the stack
 			EndIf                                                                           ;   end if
 
 		ElseIf __pQueIsDone($oStackTop) Then                                                ; if we finished processing this statement block then
 
 			If $g_viPrintCondCmds Then _
-					__ConsoleWriteVar($oStackTop, ", ", _
-					"__viLoopExec pQue is done")
+					__ConsolePrintVars("__viLoopExecStack, ", "pQue is done", $oStackTop)
 
 			__pQueRestart($oStackTop)                                                       ;   reset PC to begining of the block
 			$sCmd = __pQueCmd($oStackTop)                                                   ;   $sCmd = the command that created this block
@@ -1527,14 +1608,14 @@ Func __viLoopExec($oDev)
 				ContinueLoop                                                                ;     loop back and start from testing the condition
 
 			ElseIf $sCmd = "until" Then                                                     ;   else if it is an 'until' block then
-				$bCond = __viEvalExpr(__pQueCond($oStackTop))                               ;     if loop condition is true then set flag to exit the block
+				$bCond = __viEvalExpr(__pQueCond($oStackTop), $oDev)                        ;     if loop condition is true then set flag to exit the block
 				If $g_viPrintpQueCond Then _
-						__ConsoleWriteVar(__pQueCond($oStackTop), ", ", _
-						"__viLoopExecStack until cond '" & $bCond & "'")
+						__ConsolePrintVars("__viLoopExecStack, ", "until cond " & $bCond, __pQueCond($oStackTop))
+				If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $sCmd & " (" & $bCond & ")" & @CRLF)
 
 			EndIf                                                                           ;   end if
 			If $bCond Then                                                                  ;   if condition is true then
-				__StackPop($oStack)                                                         ;     exit the block
+				__viLoopExecStackPop($oStack, $oDev)                                        ;     exit the block
 				ContinueLoop                                                                ;     loop back and recheck the stack
 			EndIf                                                                           ;   end if
 
@@ -1542,9 +1623,8 @@ Func __viLoopExec($oDev)
 
 		$aReq = __pQuePCitem($oStackTop)                                                    ; pull statement to execute from block
 		$bLoopExit = Not __DequeIsDeque($aReq)                                              ; if aReq is a statement block then
-		If Not $bLoopExit Then __StackPush($oStack, $aReq)                                  ;   push it onto the stack and loop back for processing
+		If Not $bLoopExit Then __viLoopExecStackPushDbg($oStack, $aReq, $oDev)              ;   push it onto the stack and loop back for processing
 	Until $bLoopExit
-
 
 
 	Local $sReq = "", $waitReply = False
@@ -1564,20 +1644,17 @@ Func __viLoopExec($oDev)
 	$oDev.Item('waitReply') = False                                                         ; waitReply flag is defaulted to false unless we get an actual visa command that needs it
 	$oDev.Item('rMode') = 0                                                                 ; default to visa receive mode unless we get a modbus command
 
+	If $oDev.Exists('debug') Then $oDev.Item('debug') &= "< '" & $sReq & "'" & @CRLF
 
 
 	;
 	; conditional statement processing: first time processing
 	;
 
-	If $g_viPrintCondCmds Then __ConsoleWriteVar($aReq, ", ", @CRLF & "cond cmd")                            ; debug
+	If $g_viPrintCondCmds Then __ConsolePrintVars("__viLoopExec, ", "cond cmd", $aReq)      ; debug
 
 	$sReq = StringStripWS($sReq, 3)                                                         ; trim leading and trailing white spaces
 	If StringLeft($sReq, 1) = "#" Or $sReq = "" Then Return 1                               ; skip comments and blank lines
-
-
-	;__ConsoleWriteVar($oDev, ", ", "__viLoopExecCmd oDev")      ; debug
-	;__ConsoleWriteVar($sReq, ", ", "__viLoopExecCmd sReq")      ; debug
 
 
 	Local $sArg, $sArg1, $sArg2
@@ -1616,47 +1693,58 @@ Func __viLoopExec($oDev)
 
 	If $sCmd = "if" Then                                                                    ; if cmd is 'if' then
 		If StringRight($sArg, 5) = " then" Then $sArg = StringTrimRight($sArg, 5)           ;   if a 'then' is added to the end of the line, remove it to get just the condition
-		__viLoopExecStackPush($oStack, _
-				__pQueNew($sCmd, $sArg), _
-				Not __viEvalExpr($sArg))                                                    ;   push start of new 'if' statement block into cStack
+		__viLoopExecStackPush($oStack, __pQueNew($sCmd, $sArg), $oDev, _
+				Not __viEvalExpr($sArg, $oDev))                                             ;   push start of new 'if' statement block into cStack
+		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $sCmd & " " & $sArg & @CRLF)
+
 		Return 1                                                                            ;   return, we are done processing this statement
 
 	ElseIf $sCmd = "else" Then                                                              ; else if cmd is 'else' then
 		If $spCmd = "if" Then                                                               ;   close previous 'if' statement block and set 'skip' flag for this 'else' block
 			$bSkip = Not $bSkip                                                             ;   'else' block 'skip' flag evaluate to opposite of 'if' block 'skip' flag
-			__viLoopExecStackPop($oStack, $oStackTop)                                       ;   close the 'if' block
+			__viLoopExecUnparkStackPop($oStack, $oStackTop, $oDev)                          ;   close the 'if' block
 		EndIf
-		__viLoopExecStackPush($oStack, __pQueNew($sCmd, $sArg), $bSkip)                     ;   push start of new 'else' statement block into cStack
+		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $sCmd & @CRLF)
+		__viLoopExecStackPush($oStack, __pQueNew($sCmd, $sArg), $oDev, $bSkip)              ;   push start of new 'else' statement block into cStack
 		Return 1                                                                            ;   return, we are done processing this statement
 
 	ElseIf $sCmd = "while" Then                                                             ; else if cmd is 'while' then
-		$bSkip = Not __viEvalExpr($sArg)                                                    ;   evaluate cond before starting loop and set 'skip' flag as needed
-		;__ConsoleWriteVar($bSkip, ", ", "cond cmd while bSkip")
-		__viLoopExecStackPush($oStack, __pQueNew($sCmd, $sArg), $bSkip)                     ;   push start of new 'while/end' statement block into cStack
+		$bSkip = Not __viEvalExpr($sArg, $oDev)                                             ;   evaluate cond before starting loop and set 'skip' flag as needed
+		If $g_viPrintCondCmds Then __ConsolePrintVars("__viLoopExec, ", "cond cmd while " & $sArg, $bSkip)
+		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $sCmd & " " & $sArg & @CRLF)
+		__viLoopExecStackPush($oStack, __pQueNew($sCmd, $sArg), $oDev, $bSkip)              ;   push start of new 'while/end' statement block into cStack
 		Return 1                                                                            ;   return, we are done processing this statement
 
-	ElseIf $sCmd = "end" Or $sCmd = "wend" Then                                             ; else if cmd is 'end' then close 'if' or 'while' block
-		If $g_viPrintCondCmds Then __ConsoleWriteVar($oStack, ", ", "end cmd pre  oStack")      ; debug
+	ElseIf $sCmd = "end" Or $sCmd = "wend" Or $sCmd = "endif" Then                          ; else if cmd is 'end' then close 'if' or 'while' block
+		If $g_viPrintCondCmds Then __ConsolePrintVars("__viLoopExec, ", "end cmd pre  oStack", $oStack)
 		If $spCmd = "while" Then                                                            ;   if closing 'while' block then
 			__pQueRelease($oStackTop)                                                       ;     unpark the block and leave it at the top of the stack for looping
-			If $bSkip Then __viLoopExecStackPop($oStack, $oStackTop)                        ;     if skip flag set then pop the while block off the execution stack
+			If $bSkip Then __viLoopExecUnparkStackPop($oStack, $oStackTop, $oDev)           ;     if skip flag set then pop the while block off the execution stack
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> end while" & @CRLF)
+
 		ElseIf $spCmd = "if" Then                                                           ;   else if closing 'if' block then
-			__viLoopExecStackPop($oStack, $oStackTop)                                       ;     close the block and pop it off the stack
+			__viLoopExecUnparkStackPop($oStack, $oStackTop, $oDev)                          ;     close the block and pop it off the stack
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> end if" & @CRLF)
+
 		ElseIf $spCmd = "else" Then                                                         ;   else if closing 'else' block then
-			__viLoopExecStackPop($oStack, $oStackTop)                                       ;     close the block and pop it off the stack
+			__viLoopExecUnparkStackPop($oStack, $oStackTop, $oDev)                          ;     close the block and pop it off the stack
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> end if" & @CRLF)
+
 		EndIf                                                                               ;   end if		(else it does not match any qualified statements, we ignore it)
-		If $g_viPrintCondCmds Then __ConsoleWriteVar($oStack, ", ", "end cmd post oStack")      ; debug
+		If $g_viPrintCondCmds Then __ConsolePrintVars("__viLoopExec, ", "end cmd post oStack", $oStack)
 		Return 1                                                                            ;   return, we are done processing this statement
 
 	ElseIf $sCmd = "do" Then
-		__viLoopExecStackPush($oStack, __pQueNew($sCmd, $sArg))                             ; push start of new 'do/until' statement block into cStack
+		__viLoopExecStackPush($oStack, __pQueNew($sCmd, $sArg), $oDev)                      ; push start of new 'do/until' statement block into cStack
+		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> do" & @CRLF)
 		Return 1                                                                            ;   return, we are done processing this statement
 
 	ElseIf $sCmd = "until" Then
 		If $spCmd <> "do" Then Return 1                                                     ; script has until without do, ignore until
 		__pQueSet($oStackTop, $sCmd, $sArg)                                                 ; update the 'cmd' field to 'until'
 		__pQueSetDone($oStackTop)                                                           ; set the queue to the 'done' state so it is caught on next cycle for evaluating loop condition
-		If $bSkip Then __viLoopExecStackPop($oStack, $oStackTop)                            ; if skip flag set then do not loop this block
+		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> until " & $sArg & " (" & $bSkip & ")" & @CRLF)
+		If $bSkip Then __viLoopExecUnparkStackPop($oStack, $oStackTop, $oDev)               ; if skip flag set then do not loop this block
 		Return 1                                                                            ;   return, we are done processing this statement
 	EndIf
 
@@ -1679,18 +1767,33 @@ Func __viLoopExec($oDev)
 	;
 
 
-	If $g_viPrintCmds Then __ConsoleWriteVar($aReq, ", ", "visa send")                      ; debug
+	If $g_viPrintCmds Then __ConsolePrintVars("__viLoopExec, ", $oDev.Item('sAddr') & " visa send", $aReq)
 
 
 	__viLoopExecParseCmd($sReq, $sCmd, $sArg, $sArg1, $sArg2)                               ; parse the command string
 
 
-	; statement preprocessing
+	Local $bEOL = 1                                                                         ; 1 = set visa to interpret EOL, 0 = ignore EOL (for binary transfers)
+
+	; non-conditional statement preprocessing
 	Local $aMatch
-	$aMatch = StringRegExp($sReq, "^\$\S*=", 1)                                             ;
+
+	$aMatch = StringRegExp($sReq, "^\$\$\S*?=", 1)                                           ;
+	If Not @error Then                                                                      ; if req starts with $$expr= then
+		Local $var = StringTrimLeft(StringTrimRight($aMatch[0], 1), 2)                      ;   remove the trailing = and leading $$
+		$bEOL = Int(StringRight($var, 1) <> ":")                                            ;   if $$expr:= then set bEOL to 0 for binary transfer
+		If Not $bEOL Then $var = StringTrimRight($var, 1)
+		$oDev.Item('rExec') = $var
+		$sReq = StringStripWS(StringTrimLeft($sReq, StringLen($aMatch[0])), 3)              ;   remove the $$expr= prefix from the command
+		$waitReply = True                                                                   ;   force waitReply to true so we wait for the results
+		__viLoopExecParseCmd($sReq, $sCmd, $sArg, $sArg1, $sArg2)                           ;   parse the new statement
+	EndIf                                                                                   ; endif
+
+	$aMatch = StringRegExp($sReq, "^\$\S*?=", 1)                                            ;
 	If Not @error Then                                                                      ; if req starts with $var= then
-		Local $var = StringTrimRight($aMatch[0], 1)                                         ;   remove the trailing =
-		If StringLeft($var, 1) = "$" Then $var = StringTrimLeft($var, 1)
+		Local $var = StringTrimRight($aMatch[0], 1)                                         ;   remove the trailing =, keep leading $ in case its an empty variable
+		$bEOL = Int(StringRight($var, 1) <> ":")                                            ;   if $var:= then set bEOL to 0 for binary transfer
+		If Not $bEOL Then $var = StringTrimRight($var, 1)
 		$oDev.Item('rVar') = $var
 		$sReq = StringStripWS(StringTrimLeft($sReq, StringLen($aMatch[0])), 3)              ;   remove the $var= prefix from the command
 		$waitReply = True                                                                   ;   force waitReply to true so we wait for the results
@@ -1703,6 +1806,7 @@ Func __viLoopExec($oDev)
 		$sReq = StringStripWS(StringTrimLeft($sReq, StringLen($aMatch[0])), 3)              ;   extract the command statement
 		__viLoopExecUploadPrep($oDev, $sFile)                                               ;   open upload file for reading and set $oDev('upload') so it is sent along with visa command
 		$waitReply = False
+		$bEOL = 0                                                                           ;   bEOL = 0 for binary transfer
 		__viLoopExecParseCmd($sReq, $sCmd, $sArg, $sArg1, $sArg2)                           ;   parse the new statement
 	EndIf                                                                                   ; endif
 
@@ -1712,14 +1816,19 @@ Func __viLoopExec($oDev)
 		$sReq = StringStripWS(StringTrimLeft($sReq, StringLen($aMatch[0])), 3)              ;   extract the command statement
 		__viLoopExecDownloadPrep($oDev, $sFile)                                             ;   open download file for writing and set $oDev('download') so response is written to file
 		$waitReply = True
+		$bEOL = 0                                                                           ;   bEOL = 0 for binary transfer
 		__viLoopExecParseCmd($sReq, $sCmd, $sArg, $sArg1, $sArg2)                           ;   parse the new statement
 	EndIf                                                                                   ; endif
 
-
-
-	If $g_viPrintCondCmds Then
-		__ConsolePrintVar("exec cmd", "sReq", $sReq, "sArg", $sArg, "sArg1", $sArg1, "sArg2", $sArg2, "waitReply", $waitReply)
+	If StringLeft($sCmd, 3) = "ret" Then                                                    ; if a return notice is requested then set up for response/status to go to rNotice
+		$oDev.Item('rNotice') = StringTrimLeft($sCmd, 3)                                    ;   set the return notice
+		$sReq = StringStripWS(StringTrimLeft($sReq, StringLen($sCmd)), 3)                   ;   extract the command statement
+		__viLoopExecParseCmd($sReq, $sCmd, $sArg, $sArg1, $sArg2)                           ;   parse the new statement
 	EndIf
+
+
+
+	If $g_viPrintCondCmds Then __ConsolePrintVars("exec cmd, ", "sReq", $sReq, "sArg", $sArg, "sArg1", $sArg1, "sArg2", $sArg2, "waitReply", $waitReply)
 
 
 
@@ -1730,67 +1839,99 @@ Func __viLoopExec($oDev)
 
 	If $sCmd = "sleep" Then
 		$oDev.Item('cmd') = "s"                                                             ; $oDev.Item('cmd'] = "s" for sleep
-		$oDev.Item('timeout') = Int(__viEvalExpr($sArg))                                    ; $oDev.Item('timeout'] = duration
+		$oDev.Item('timeout') = Int(__viEvalExpr($sArg, $oDev))                             ; $oDev.Item('timeout'] = duration
 		$oDev.Item('cdone') = False
 		Return 1
 
+	ElseIf $sCmd = "close" Then                                                             ; intentionally close the connection
+		__viLoopExecClose($oDev)
+		Return 1
+
 	ElseIf $sCmd = "cd" Or $sCmd = "chdir" Then                                             ; change the current working directory
-		FileChangeDir(__viEvalExprStrs($sArg))
+		FileChangeDir(__viEvalExprStrs($sArg, $oDev))
 		Return 1
 
 	ElseIf $sCmd = "logfile" Then                                                           ; set the file name/path of the logfile
-		$g_logfile = _PathFull(__viEvalExprStrs($sArg))
+		$g_logfile = _PathFull(__viEvalExprStrs($sArg, $oDev))
 		Return 1
 
 	ElseIf $sCmd = "log" Or $sCmd = "print" Then                                            ; write a line to the logfile - output data
 		Local $hFile = FileOpen($g_logfile, $FO_APPEND)
 		If $hFile > 0 Then
-			FileWrite($hFile, __viEvalExprStrs($sArg) & @CRLF)
+			FileWrite($hFile, __viEvalExprStrs($sArg, $oDev) & @CRLF)
 			FileClose($hFile)
 		EndIf
 		Return 1
 
-	ElseIf $sCmd = "set" Then                                                               ; set a variable to a value, perform a function or evaluate expression
+	ElseIf $sCmd = "set" Then                                                                       ; set a variable to a value, perform a function or evaluate expression
 		If StringLeft($sArg1, 1) = "$" Then $sArg1 = StringTrimLeft($sArg1, 1)
-		Assign($sArg1, __viEvalExpr($sArg2), 2)
-		If $g_viPrintCondCmds Then __ConsoleWriteVar(Eval($sArg1), ", ", "set " & $sArg1)                            ; debug
+		AssignEx($sArg1, __viEvalExpr($sArg2, $oDev), $oDev)
+		If $g_viPrintCmds Then __ConsolePrintVars("__viLoopExec, ", $oDev.Item('sAddr') & " set " & $sArg1, EvalEx($sArg1, $oDev))
 		Return 1
 
-	ElseIf $sCmd = "getret" Or $sCmd = "read" Then                                          ; take reply from previous command and assign it to a variable
-		$sArg = __viEvalExprStrs($sArg)
+	ElseIf $sCmd = "dset" Then                                                                      ; set a variable the global dictionary
+		If StringLeft($sArg1, 1) = "$" Then $sArg1 = StringTrimLeft($sArg1, 1)
+		AssignDict($sArg1, __viEvalExpr($sArg2, $oDev))
+		If $g_viPrintCmds Then __ConsolePrintVars("__viLoopExec, ", $oDev.Item('sAddr') & " set " & $sArg1, EvalEx($sArg1, $oDev))
+		Return 1
+
+	ElseIf $sCmd = "sset" Then                                                                      ; set a variable in the device config dictionary (oDev)
+		If StringLeft($sArg1, 1) = "$" Then $sArg1 = StringTrimLeft($sArg1, 1)
+		AssignDict($sArg1, __viEvalExpr($sArg2, $oDev))
+		If $g_viPrintCmds Then __ConsolePrintVars("__viLoopExec, ", $oDev.Item('sAddr') & " set " & $sArg1, EvalEx($sArg1, $oDev))
+		Return 1
+
+	ElseIf $sCmd = "flush" Then
+		__viFlushInputBuffer($oDev)                                                                 ; flush input buffer
+		$oDev.Item('qret') = __DequeNew()                                                           ; dump return queue
+		$sReq = @CRLF & $VI_REQ_ERR                                                                 ; send an empty command to terminate any prior input to device
+		$oDev.Item('rVar') = "$"                                                                    ; follow command with ERR request to flush any error codes
+		;																							; fall thru to execute commands
+
+	ElseIf $sCmd = "flushinput" Then
+		__viFlushInputBuffer($oDev)                                                                 ; flush input buffer
+		Return 1
+
+	ElseIf $sCmd = "flushret" Then
+		$oDev.Item('qret') = __DequeNew()                                                           ; dump return queue
+		Return 1
+
+	ElseIf $sCmd = "getret" Or $sCmd = "read" Then                                                  ; (dbgTab) take reply from previous command and assign it to a variable
+		$sArg = __viEvalExprStrs($sArg, $oDev)
 		If StringLeft($sArg, 1) = "$" Then $sArg = StringTrimLeft($sArg, 1)
-		Local $sR = __viRetQueuePop($oDev)                                                  ; pull return value from previous command
-		If $sArg <> "" Then Assign($sArg, $sR, 2)
+		Local $sR = __viRetQueuePop($oDev)                                                          ; pull return value from previous command
+		If $sArg <> "" Then AssignEx($sArg, $sR, $oDev)
 		Return 1
 
-	ElseIf $sCmd = "upload" Then                                                            ; include this before the visa command that initiates the transfer
-		__viLoopExecUploadPrep($oDev, __viEvalExprStrs($sArg))
-		Return 1
+		; legacy code
+		;	ElseIf $sCmd = "upload" Then                                                            ; include this before the visa command that initiates the transfer
+		;		__viLoopExecUploadPrep($oDev, __viEvalExprStrs($sArg,$oDev))
+		;		Return 1
 
-	ElseIf $sCmd = "download" Then                                                          ; include this before the visa command that initiates the transfer
-		__viLoopExecDownloadPrep($oDev, __viEvalExprStrs($sArg))
-		Return 1
+		;	ElseIf $sCmd = "download" Then                                                          ; include this before the visa command that initiates the transfer
+		;		__viLoopExecDownloadPrep($oDev, __viEvalExprStrs($sArg,$oDev))
+		;		Return 1
 
 	ElseIf $sCmd = "parsepic" Then                                                          ; include this after download of a picture file
-		Local $sFile = __viParsePicture(__viEvalExprStrs($sArg))                            ;   fix picture file (strip extra header, find extension), and return=file name
+		Local $sFile = __viParsePicture(__viEvalExprStrs($sArg, $oDev))                     ;   fix picture file (strip extra header, find extension), and return=file name
 		__viRetQueuePush($oDev, $sFile)
 		Return 1
 
 	ElseIf $sCmd = "modbuswrite" Then                                                       ; send a modbus register write command
-		$aArg = StringSplit(StringRegExpReplace(__viEvalExprStrs($sArg), "\s+", " "), " ")
+		$aArg = StringSplit(StringRegExpReplace(__viEvalExprStrs($sArg, $oDev), "\s+", " "), " ")
 		If UBound($aArg) >= 3 Then
-			$oDev.Item('cmd') = "modbus write " & $aArg[0] & " " & $aArg[1] & " " & $aArg[2]
-			__viMbWrite($oDev, $aArg[0], $aArg[1], $aArg[2])                                ; params: $oDev, type=(32|64)(i|f), address, value
+			$oDev.Item('cmd') = "modbus write " & $aArg[1] & " " & $aArg[2] & " " & $aArg[3]
+			__viMbWrite($oDev, $aArg[1], $aArg[2], $aArg[3])                                ; params: $oDev, type=(32|64)(i|f), address, value
 		EndIf
 		Return 1
 
 	ElseIf $sCmd = "modbusread" Then                                                        ; send a modbus register read command
 		$oDev.Item('waitReply') = True
 		$oDev.Item('rMode') = 1                                                             ; expect modbus tcp frame reply
-		$aArg = StringSplit(StringRegExpReplace(__viEvalExprStrs($sArg), "\s+", " "), " ")
+		$aArg = StringSplit(StringRegExpReplace(__viEvalExprStrs($sArg, $oDev), "\s+", " "), " ")
 		If UBound($aArg) >= 2 Then
-			$oDev.Item('cmd') = "modbus read " & $aArg[0] & " " & $aArg[1]
-			__viMbRead($oDev, $aArg[0], $aArg[1])                                           ; params: $oDev, type=(32|64)(i|f), address
+			$oDev.Item('cmd') = "modbus read " & $aArg[1] & " " & $aArg[2]
+			__viMbRead($oDev, $aArg[1], $aArg[2])                                           ; params: $oDev, type=N(i|f|s), address
 		EndIf
 		Return 1
 
@@ -1799,15 +1940,35 @@ Func __viLoopExec($oDev)
 
 
 
+	; if we are main queue then send visa commands to target device queues
+
+	If $oDev.Item('index') = "main" Then                                ; if we are main queue then
+		If StringLeft($sCmd, 3) = "sel" Then                            ;   if we are main queue and 'select' command then select device target for visa commands
+			If $g_oViSelect.Exists($sArg) Then $g_oViSelect.Item('active') = $g_oViSelect.Item($sArg)
+			Return 1
+		EndIf
+
+		; 																;   else $sReq is a visa statement to send to selected/active device
+		If Not $g_oViSelect.Exists('active') Then Return 1              ;   if no target device then return with nothing done
+		Local $oDevT = $g_oViSelect.Item('active')
+		__viReq($oDevT, "ret0 " & $sReq, $waitReply, $oDev.Item('timeout')) ; put visa command in target device queue and request notification to '0'
+		$oDev.Item('wNotice') = '0'                                     ;   flag that we are waiting on notification from '0'
+		$oDev.Item('cmd') = $sReq
+		$oDev.Item('waitReply') = True                                  ;   set waitReply flag so we wait until wNotice reply
+		Return 1
+	EndIf
+
+
 
 	;
 	; statement processing:  visa/scpi statement to send to visa device
 	;
 
+
 	If $sCmd = "write" Or $sCmd = "send" Then _                                             ; optional prefix visa statement with 'write' or 'send'
 			$sReq = StringTrimLeft($sReq, StringLen($sCmd) + 1)                             ;   remove prefix
 
-	$sReq = __viEvalExprStrs($sReq)                                                         ; evaluate expressions {expr} and substitute
+	$sReq = __viEvalExprStrs($sReq, $oDev)                                                  ; evaluate expressions {expr} and substitute
 	$oDev.Item('cmd') = $sReq                                                               ; note current command being processed
 	If StringRight($sReq, 1) = "?" Then $waitReply = True                                   ; if request string ends in ? then assume we are getting a reply
 
@@ -1817,10 +1978,13 @@ Func __viLoopExec($oDev)
 			__viRetQueuePush($oDev, "", -1)                                                 ;     push error code return
 			$oDev.Item('creturn') = -1                                                      ;     set command return code to error
 		EndIf                                                                               ;   end if
-		$oDev.Item('reqdone') = True
+		__viLoopExecReqComplete($oDev)
+		; note: using $waitReply local variable.  oDev(waitReply) was never set, so we do not need to clear it here. see command a couple of lines below
 		Return SetError(-1, 0, 0)                                                           ;   return error
 	EndIf                                                                                   ; end if
 	$oDev.Item('waitReply') = $waitReply                                                    ; set waitReply to what was requested
+
+	If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $oDev.Item('cmd') & @CRLF) ;  & "  '" & $sReq & "'" & @CRLF)
 
 	;if $oDev.Item('viIpMode') then __viFlushInputBuffer($oDev)  							; if raw socket mode then flush input buffer before sending next command as a precaution
 
@@ -1832,11 +1996,11 @@ Func __viLoopExec($oDev)
 		$oDev.Item('upload') = Int(StringMid($hFile, $iPos + 2))                            ;   extract the file handle
 		Local $sHeader = StringMid($hFile, 2, $iPos - 1)                                    ;   extract the header
 		$sReq &= $sHeader                                                                   ;   add IEEE 488.2 header
-		__viSetEOLenable($oDev, 0)                                                          ;   disable EOL interpretation for binary file transfers
+		$bEOL = 0
 	Else                                                                                    ; else
 		$sReq &= @CRLF                                                                      ;   add message terminator
-		__viSetEOLenable($oDev, 1)                                                          ;   enable EOL interpretation for request string
 	EndIf                                                                                   ; endif
+	__viSetEOLenable($oDev, $bEOL)                                                          ; set EOL interpretation for text (1) or binary (0) file transfers
 
 
 
@@ -1844,7 +2008,7 @@ Func __viLoopExec($oDev)
 
 	If $waitReply Then $oDev.Item('rdone') = False                                          ; reset read done indicator if we need a reply
 	If $hFile = 0 Then                                                                      ; if not a file upload operation then
-		If Not $waitReply Then $oDev.Item('reqdone') = True                                 ;   if no reply needed, then raise the request done flag
+		If Not $waitReply Then __viLoopExecReqComplete($oDev)                               ;   if no reply needed, then raise the request done flag
 	Else                                                                                    ; else file upload operation needs background time
 		__viSetEOLenable($oDev, 0)                                                          ;   disable EOL interpretation for binary file transfers
 		$oDev.Item('cdone') = False                                                         ;   clear the cdone flag
@@ -1905,7 +2069,8 @@ EndFunc   ;==>__viLoopExecParseCmd
 
 
 ;		find all occurrences of "{expr}" and substitute with the evaluated expression usine execute(expr)
-Func __viEvalExprStrs($sText)
+;		$oDev passed in so we have access to it as a local variable for the Execute function
+Func __viEvalExprStrs($sText, $oDev)
 	; Regex pattern to find matches inside curly braces: {(.*?)}
 	; It uses lazy matching (.*?) so it stops at the very first closing brace.
 	Local $sPattern = "{(.*?)}"
@@ -1922,12 +2087,12 @@ Func __viEvalExprStrs($sText)
 EndFunc   ;==>__viEvalExprStrs
 
 
-Func __viEvalExpr($sExpr)                                                               ; evaluate a single expression
+;		$oDev passed in so we have access to it as a local variable for the Execute function
+Func __viEvalExpr($sExpr, $oDev)                                                        ; evaluate a single expression
 	If StringLeft($sExpr, 1) = "{" Then $sExpr = StringTrimLeft($sExpr, 1)
 	If StringRight($sExpr, 1) = "}" Then $sExpr = StringTrimRight($sExpr, 1)
 	Local $vRet = Execute($sExpr)
 	If @error Then $vRet = String($sExpr)
-	;__ConsoleWriteVar($vRet, ", ", "__viEvalExpr('" & $sExpr & "') error=" & @error)
 	Return $vRet
 EndFunc   ;==>__viEvalExpr
 
@@ -1947,7 +2112,7 @@ Func __viLoopExecDownloadPrep($oDev, $sArg)
 EndFunc   ;==>__viLoopExecDownloadPrep
 
 
-Func __viLoopExecStackPush($oStack, $opQue, $bSkip = False)                             ; push new opQue item onto cStack
+Func __viLoopExecStackPush($oStack, $opQue, $oDev, $bSkip = False)                      ; push new opQue item onto cStack
 	Local $oStackTop = __StackPeek($oStack)
 	$bSkip = __pQueSkip($opQue) Or $bSkip                                               ; merge 'skip' flag with opQue's skip flag
 	If __DequeIsDeque($oStackTop) Then                                                  ; additionally if opQue at top of stack is parked then push this opQue into it as well
@@ -1955,16 +2120,46 @@ Func __viLoopExecStackPush($oStack, $opQue, $bSkip = False)                     
 		$bSkip = __pQueSkip($oStackTop) Or $bSkip                                       ; merge 'skip' flag from current opQue on top of stack
 	EndIf
 	__pQueSkip($opQue, $bSkip)                                                          ; set opQue 'skip' flag to merged bSkip
-	__StackPush($oStack, $opQue)                                                        ; push opQue onto the stack
-	If $g_viPrintCondCmds Then __ConsoleWriteVar($opQue, ", ", "__viLoopExecStackPush")     ; debug
+	__viLoopExecStackPushDbg($oStack, $opQue, $oDev)                                    ; push opQue onto the stack
+	If $g_viPrintCondCmds Then __ConsolePrintVars("__viLoopExecStackPush, ", "opQue", $opQue)
 EndFunc   ;==>__viLoopExecStackPush
 
-Func __viLoopExecStackPop($oStack, $oStackTop)
+Func __viLoopExecStackPushDbg($oStack, $opQue, $oDev)                                   ; process execute Stack Push, update debug edit boxes if enabled
+	__StackPush($oStack, $opQue)
+	If $oDev.Exists('debug') Then
+		If __IsDictionary($opQue) Then
+			Local $s = '', $sCmd = '', $bSkip = ''
+			If $opQue.Exists('cmd') Then $sCmd = $opQue.Item('cmd')
+			If $opQue.Exists('skip') Then $bSkip = $opQue.Item('skip')
+			$s &= $sCmd
+			If $opQue.Exists('cond') Then $s &= " " & $opQue.Item('cond')
+			If $sCmd = "if" Then $s &= " (" & (Not $bSkip) & ")"
+			If $opQue.Exists('bCond') Then $s &= ", bCond=" & $opQue.Item('bCond')
+			$s &= ", skip=" & $bSkip
+			__GUICtrlEdit_StackPush($g_dbg_hStack, $s)
+		EndIf
+	EndIf
+EndFunc   ;==>__viLoopExecStackPushDbg
+
+
+Func __viLoopExecUnparkStackPop($oStack, $oStackTop, $oDev)
 	__pQueRelease($oStackTop)                                                           ; unpark the statement block on the top of the stack so it will be executed on next encounter
-	__StackPop($oStack)                                                                 ; close the statement block by removing it from the stack
+	__viLoopExecStackPop($oStack, $oDev)                                                ; close the statement block by removing it from the stack
+EndFunc   ;==>__viLoopExecUnparkStackPop
+
+Func __viLoopExecStackPop($oStack, $oDev)                                               ; pop items off the execute stack
+	__StackPop($oStack)
+	If $oDev.Exists('debug') Then __GUICtrlEdit_StackPop($g_dbg_hStack)
 EndFunc   ;==>__viLoopExecStackPop
 
-
+Func __viLoopExecReqComplete($oDev)                                                     ; request is complete, set the flag and check on notifications
+	Local $rNotice = String($oDev.Item('rNotice'))
+	If $rNotice <> "" Then
+		If Not $g_oNotices.Exists($rNotice) Then $g_oNotices.Item($rNotice) = Null      ; if rNotice and it is not in oNotices then set it in oNotices
+	EndIf
+	;$oDev.Item('waitReply') = False                                                     ; signal cmd that it has received reply and can move to next command
+	$oDev.Item('reqdone') = True                                                        ; flag request done for client code
+EndFunc   ;==>__viLoopExecReqComplete
 
 
 
@@ -2058,28 +2253,26 @@ EndFunc   ;==>__viWriteDll
 ;                   viRead blocks into instantaneous non-blocking network peeks.
 ; ==============================================================================
 Func __viReadBuf($oDev, $iMaxLen = 1460)
-	Local $aR = [-1, Binary("")]
-	If Not __viIsInstrument($oDev) Then Return SetError(1, 0, $aR)
+	Local $aErr = [-1, Binary("")], $aR = [0, Binary("")]
+	If Not __viIsInstrument($oDev) Then Return SetError(1, 0, $aErr)
 	Local $bData = Binary("")
 
 	; -------------------------------------------------------------------------		; Stream Mode: Raw Socket
 	If $oDev.Item('viIpMode') Then                                                  ;
-		Local $hSocket = $oDev.Item('viSocket')
-		If $hSocket = 0 Then Return SetError(2, 0, $aR)
-		Local $bData = Binary("")
-		Local $iErr = 0
-		If __TCP_IsDataAvailable($hSocket) Then                                     ; nonblocking check if data is available
-			$bData = TCPRecv($hSocket, $iMaxLen, 1)
-			$iErr = @error
-		EndIf
+		Local $hSocket, $iErr = 0, $bData
+		$hSocket = $oDev.Item('viSocket')
+		If $hSocket = 0 Then Return $aErr
+		If Not __TCP_IsDataAvailable($hSocket) Then Return SetError(@error, @extended, @error ? $aErr : $aR)
+		$bData = TCPRecv($hSocket, $iMaxLen, 1)
+		$iErr = @error
 		If $iErr = 10093 Then
 			TCPStartup()
 			Sleep(50)
-			__viOpen($oDev)
-			If __TCP_IsDataAvailable($hSocket) Then
-				$bData = TCPRecv($hSocket, $iMaxLen, 1)
-				$iErr = @error
-			EndIf
+			If Not __viOpen($oDev) Then Return SetError(3, 0, $aErr)
+			$hSocket = $oDev.Item('viSocket')
+			If Not __TCP_IsDataAvailable($hSocket) Then SetError(@error, @extended, @error ? $aErr : $aR)
+			$bData = TCPRecv($hSocket, $iMaxLen, 1)
+			$iErr = @error
 		EndIf
 		$aR[0] = ($iErr = 0 ? 1 : $iErr)                                            ; return 1 = ok, but possibly more data remaining, to match vxi-11 return value
 		$aR[1] = $bData
@@ -2089,7 +2282,7 @@ Func __viReadBuf($oDev, $iMaxLen = 1460)
 
 	; -------------------------------------------------------------------------		; Stream Mode: VXI-11 visa32.dll
 	Local $hSession = $oDev.Item('viSession')
-	If $hSession = 0 Then Return SetError(3, 0, $aR)
+	If $hSession = 0 Then Return SetError(3, 0, $aErr)
 	Local Const $VI_ERROR_TMO = 0xBFFF0015                                          ; Signed equivalent = -1073807339
 
 	Local $iOriginalTimeout = $oDev.Item('timeout')                                 ; Store your script's current global command timeout to restore it later
@@ -2104,11 +2297,11 @@ Func __viReadBuf($oDev, $iMaxLen = 1460)
 			"struct*", $tBytesRead)                                                 ;   Captured bytes written pointer tracking reference
 	If @error Or Not IsArray($aRead) Then                                           ; if error then
 		__viSetTMO($hSession, $iOriginalTimeout)                                    ;   restore timeout setting
-		Return SetError(-1, 0, $aR)                                                 ;   return error
+		Return SetError(-1, 0, $aErr)                                               ;   return error
 	EndIf                                                                           ; endif
 	Local $iStatus = $aRead[0]                                                      ; status of viRead
 	__viSetTMO($hSession, $iOriginalTimeout)                                        ; restore original timeout setting
-	If $iStatus = $VI_ERROR_TMO Then                                                ; if timeout then we received no data
+	If $iStatus = $VI_ERROR_TMO Then                                                ; if timeout then we received no data - emulate nonblocking read
 		$aR[0] = 1
 		Return $aR
 	EndIf
@@ -2126,68 +2319,48 @@ EndFunc   ;==>__viSetTMO
 
 
 
-; =======================================================================================================================
-; Function Name:    __TCP_IsDataAvailable
-; Description:      Checks if there is incoming data waiting to be read in the socket buffer without blocking.
-; Parameter(s):     $hSocket - The AutoIt TCP socket identifier variable.
-; Return Value(s):  True  - Data is waiting in the buffer. Safe to call TCPRecv() instantly.
-;                   False - No data is available to read at this moment.
-; =======================================================================================================================
-Func __TCP_IsDataAvailable($hSocket)
-	; Extract raw Win32 socket handle descriptor if AutoIt passed it as a tracking array
-	Local $iSocketID = $hSocket
-	If IsArray($hSocket) Then $iSocketID = $hSocket[0]
-	If Number($iSocketID) <= 0 Then Return False
-
-	; Create a Win32 fd_set structure layout template
-	; struct fd_set { u_int fd_count; SOCKET fd_array[1]; }
-	Local $tFD_SET = DllStructCreate("uint fd_count;handle fd_array")
-	DllStructSetData($tFD_SET, "fd_count", 1)
-	DllStructSetData($tFD_SET, "fd_array", $iSocketID, 1)
-
-	; Create an immediate-timeout timeval structure (0 seconds, 0 microseconds)
-	Local $tTimeVal = DllStructCreate("long tv_sec;long tv_usec")
-	DllStructSetData($tTimeVal, "tv_sec", 0)
-	DllStructSetData($tTimeVal, "tv_usec", 0)
-
-	; Call the Winsock select API targeting readfds (the second parameter)
-	Local $aRet = DllCall("ws2_32.dll", "int", "select", _
-			"int", 0, _                 ; nfds (ignored in Windows)
-			"struct*", $tFD_SET, _      ; readfds (checks if data is ready to read)
-			"ptr", 0, _                 ; writefds (omitted)
-			"ptr", 0, _                 ; exceptfds (omitted)
-			"struct*", $tTimeVal)       ; timeout structure pointer
-
-	If @error Or $aRet[0] <= 0 Then Return False ; DllCall failed or select returned 0 (timeout/no data)
-
-	Return True ; Data is physically waiting in the socket buffer!
-EndFunc   ;==>__TCP_IsDataAvailable
-
-
-
 ;			__viFlushInputBuffer
 ; task:		flush the input buffer until all previous data is emptied out of it
-Func __viFlushInputBuffer(ByRef $oDev)
+Func __viFlushInputBuffer(ByRef $oDev, $iTimeoutMS = 3000)
 	If Not __viResolveInstrument($oDev) Then Return 0
-	Local $sTrash, $iErr
+	Local $sTrash, $iErr, $iTimer = TimerInit()
 	; Set a tight timeout or loop quickly to consume all residual data
 	If $oDev.Item('viIpMode') Then
 		Local $hSocket = $oDev.Item('viSocket')
 		Do
+			$sTrash = ""
 			If __TCP_IsDataAvailable($hSocket) Then _
 					$sTrash = TCPRecv($hSocket, 2048, 1)        ; Read up to 2048 bytes at a time
 			$iErr = @error
-		Until $sTrash = "" Or $iErr
+		Until $sTrash = "" Or $iErr Or TimerDiff($iTimer) > $iTimeoutMS
 	Else
 		Do
 			$sTrash = __viReadBuf($oDev, 0x400)
-			$iErr = @error
-		Until $sTrash = "" Or $iErr
+			$iErr = @error Or $sTrash[0]
+			$sTrash = $sTrash[1]
+		Until $sTrash = "" Or $iErr Or TimerDiff($iTimer) > $iTimeoutMS
 	EndIf
 	Return 1
 EndFunc   ;==>__viFlushInputBuffer
 
 
+
+Func __viFlushErrors(ByRef $oDev)
+	Local $i = 10
+	While __viGetError($oDev) <> 0 And $i > 0
+		$i -= 1
+	WEnd
+EndFunc   ;==>__viFlushErrors
+
+
+
+Func __viGetError(ByRef $oDev)
+	Local $sR = __viReqBl($oDev, $VI_REQ_ERR)
+	If @error Then Return -1
+	Local $i = StringInStr($sR, ",")
+	If $i > 0 Then $sR = StringLeft($sR, $i - 1)
+	Return Int(Number($sR))
+EndFunc   ;==>__viGetError
 
 
 
@@ -2215,7 +2388,8 @@ Func __viReqQueuePush(ByRef $oDev, $sReq, $bWait = True, $iTimeoutMS = 1000)    
 	Local $aReq = __viReqQueueMakeItem($sReq, $bWait, $iTimeoutMS)
 	If $g_viPrintQueuePush Then ConsoleWrite(@CRLF & "__viReqQueuePush ")
 	__pQuePush($oDev.Item('qreq'), $aReq)
-	;If $g_viPrintQueuePush Then __ConsoleWriteVar($aReq, ", ", "qout push")
+	If $g_viPrintQueuePush Then __ConsolePrintVars("qout, ", "push", $aReq)
+	If $oDev.Exists('debug') Then __GUICtrlEdit_QueuePush($g_dbg_hQueue, __sPrintVar($aReq, ", "))
 EndFunc   ;==>__viReqQueuePush
 
 Func __viReqQueueMakeItem($sReq, $bWait = True, $iTimeoutMS = 1000)                 ; make the request item object for the request queue
@@ -2227,13 +2401,15 @@ Func __viReqQueueMakeItem($sReq, $bWait = True, $iTimeoutMS = 1000)             
 EndFunc   ;==>__viReqQueueMakeItem
 
 
+
 Func __viReqQueuePop($oDev)
 	Local $aR[] = ["", False, 1000]
 	If Not __viIsInstrument($oDev) Then Return $aR                                  ; if issue then return empty request
 	If __pQueIsEmpty($oDev.Item('qreq')) Then Return $aR                            ; if queue is empty then return empty request
 	If $g_viPrintQueuePop Then ConsoleWrite("__viReqQueuePop ")
 	$aR = __pQuePop($oDev.Item('qreq'))                                             ; pull next request
-	If $g_viPrintQueuePop Then __ConsoleWriteVar($aR, ", ", "qout pop ")
+	If $g_viPrintQueuePop Then __ConsolePrintVars("quot, ", "pop", $aR)
+	If $oDev.Exists('debug') Then __GUICtrlEdit_QueuePop($g_dbg_hQueue)
 	Return $aR
 EndFunc   ;==>__viReqQueuePop
 
@@ -2241,23 +2417,86 @@ EndFunc   ;==>__viReqQueuePop
 
 Func __viRetQueuePush($oDev, $sRet, $iStatus = 0)                                   ; push return item into the return queue.  $sRet = return string, $iStatus=error status
 	If Not __viIsInstrument($oDev) Then Return SetError(-1, 0, 0)
-	Local $rVar = $oDev.Item('rVar')
-	If $rVar <> "" Then
-		If StringRight($rVar, 4) <> "Data" Then $sRet = StringStripWS(BinaryToString($sRet), 3)             ; if variable name ends in "Data" then leave the result as a binary object
-		Assign($rVar, $sRet, 2)
-		If $g_viPrintQueuePush Or $g_viPrintQueuePop Then __ConsoleWriteVar($sRet, ", ", "qin $" & $rVar)
-		If $g_viPrintCmds Then __ConsoleWriteVar($sRet, ", ", "visa recv: $" & $rVar)
-		$oDev.Item('rVar') = ''
-	Else
-		Local $a[2]
-		$a[0] = $sRet
-		$a[1] = $iStatus
-		__QueuePush($oDev.Item('qret'), $a)
-		If $g_viPrintQueuePush Then __ConsoleWriteVar($a, ", ", "qin  push")
-		If $g_viPrintCmds Then __ConsoleWriteVar(StringStripWS(BinaryToString($sRet), 3), ", ", "visa recv")
-	EndIf
+	If __viProcRet($oDev, $sRet, $iStatus) Then Return 1                            ; process the reply.  if it returns true then we do not push the reply into qret queue
+
+	Local $a[2]
+	$a[0] = $sRet
+	$a[1] = $iStatus
+	__QueuePush($oDev.Item('qret'), $a)
+	If $g_viPrintQueuePush Then __ConsolePrintVars("__viRetQueuePush, ", "qin  push", $a)
+	If $g_viPrintCmds Or $g_viPrintReplies Then _
+			__ConsolePrintVars($oDev.Item('sAddr') & " , ", "visa recv", (IsBinary($sRet) ? StringStripWS(BinaryToString($sRet), 3) : $sRet))
 	Return 1
 EndFunc   ;==>__viRetQueuePush
+
+
+Func __viGUISetID($cDevID, $sId)
+	GUICtrlSetData($cDevID, $sId)
+	_GUICtrlEdit_SetSel($cDevID, 0, 0)
+EndFunc   ;==>__viGUISetID
+
+
+Func __viProcRet($oDev, $sRet, $iStatus = 0)  ; return true if we processed the reply completely and do not need it pushed into the return queue (qret)
+	If $oDev.Item('cmd') = $VI_IDN Then                                             ; if we requested identity string then harvest it
+		Local $sIdn = StringStripWS(BinaryToString($sRet), 3)
+		$oDev.Item('viIdn') = $sIdn
+		If $sIdn <> "" Then                                                         ; if there is a reply to the IDN request then
+			Local $sClass = __viClassifyItem($sIdn)
+			$oDev.Item('viType') = String($sClass)                                  ;   classify this device
+			If Not $g_oViSelect.Exists($sClass) Then $g_oViSelect.Item($sClass) = $oDev ; if there is not already an entry for the device of this type they add it to the select list
+			If $oDev.Exists('hDevID') Then
+				__viGUISetID($oDev.Item('hDevID'), ($sIdn = '') ? 'Not Found' : $sIdn)
+				$oDev.Remove('hDevID')
+			EndIf
+			If $oDev.Exists('bCommValid') Then
+				Assign($oDev.Item('bCommValid'), Not ($sIdn = ""), 2)
+				$oDev.Remove('bCommValid')
+			EndIf
+			;__viReq($oDev,"$=" & $VI_REQ_ERR)   									;   flush any errors from the IDN scan/query
+			;__viReq($oDev,"$=" & $VI_REQ_ERR)
+		EndIf                                                                       ; end if
+	EndIf
+
+	Local $rNotice = String($oDev.Item('rNotice'))
+	If $rNotice <> "" Then $g_oNotices($rNotice) = $sRet                            ; if we have a request to give notice of completion then copy reply into notice
+
+	Local $rVar
+	If $oDev.Exists('rVar') Then
+		$rVar = $oDev.Item('rVar')
+		If $rVar <> "" Then                                                         ; if rVar is not blank then we are saving to a variable
+			If StringRight($rVar, 4) <> "Data" Then                                 ;   if variable name ends in "Data" then leave the result as a binary object
+				If IsBinary($sRet) Then $sRet = StringStripWS(BinaryToString($sRet), 3) ; if reply is binary then convert to string
+			EndIf                                                                   ;   note: modbus replies will be decoded into int or float before they reach here
+			If StringLeft($rVar, 1) = "$" Then $rVar = StringTrimLeft($rVar, 1)
+			If $g_viPrintQueuePush Or $g_viPrintQueuePop Then __ConsolePrintVars("__viRetQueuePush, ", "qin $" & $rVar, $sRet)
+			If $g_viPrintCmds Or $g_viPrintReplies Then __ConsolePrintVars($oDev.Item('sAddr') & " visa recv:, ", "$" & $rVar, $sRet)
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "< $" & $rVar & "=" & __sPrintVar($sRet) & @CRLF)
+
+			If $rVar <> "" Then AssignEx($rVar, $sRet, $oDev)
+			$oDev.Item('rVar') = ''
+			Return True
+		EndIf
+	EndIf
+
+	If $oDev.Exists('rExec') Then
+		$rVar = $oDev.Item('rExec')
+		If $rVar <> "" Then                                                         ; if rExpr is not blank then we are executing the expression
+			If IsBinary($sRet) Then $sRet = StringStripWS(BinaryToString($sRet), 3) ; if reply is binary then convert to string
+			Execute($rVar)                                                          ; execute the expression
+			If $g_viPrintQueuePush Or $g_viPrintQueuePop Then __ConsolePrintVars("__viRetQueuePush, ", "qin $$" & $rVar, $sRet)
+			If $g_viPrintCmds Or $g_viPrintReplies Then __ConsolePrintVars($oDev.Item('sAddr') & " visa recv:, ", "$$" & $rVar, $sRet)
+
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "< Execute(" & $rVar & ") with " & _
+					__sPrintVar(IsBinary($sRet) ? StringStripWS(BinaryToString($sRet), 3) : $sRet, ", ", "sRet") & @CRLF)
+			$oDev.Item('rExec') = ''
+			Return True
+		EndIf
+	EndIf
+
+	If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "< " & _
+			__sPrintVar(IsBinary($sRet) ? StringStripWS(BinaryToString($sRet), 3) : $sRet, ", ") & @CRLF)
+	Return ($rNotice <> "")
+EndFunc   ;==>__viProcRet
 
 
 
@@ -2272,13 +2511,10 @@ Func __viRetQueuePop($oDev, $bBin = False)                                      
 	Else
 		$sRet = $aRet
 	EndIf
-	If Not $bBin Then $sRet = StringStripWS(BinaryToString($sRet), 3)
-	If $g_viPrintQueuePop Then __ConsoleWriteVar($oDev.Item('creturn') & "," & $iErr & "," & $sRet, ", ", "qin  pop ")
+	If Not $bBin And IsBinary($sRet) Then $sRet = StringStripWS(BinaryToString($sRet), 3)
+	If $g_viPrintQueuePop Then __ConsolePrintVars("qin  pop , ", "creturn", $oDev.Item('creturn'), "iErr", $iErr, "sRet", $sRet)
 	Return SetError($iErr, 0, $sRet)
 EndFunc   ;==>__viRetQueuePop
-
-
-
 
 
 
@@ -2424,25 +2660,43 @@ EndFunc   ;==>__viParsePicture
 ;			$sReq = request/command
 ;			$bWait = true to wait for a response before sending next request
 ; out:		return true if successful
-Func __viReq(ByRef $oDev, $sReq, $bWait = True, $iTimeoutMS = 1000)
-	Return __viReqQueuePush($oDev, $sReq, $bWait, $iTimeoutMS)
+Func __viReq(ByRef $oDev, $sReq, $bWait = True, $iTimeoutMS = 1000, $bForceNoWait = False)
+	If $sReq = "" Then Return                                       ; skip blank command
+	If StringLeft($sReq, 2) = "//" Then Return                      ; skip comment lines
+	Local $iTo = StringRegExp($sReq, "^([0-9]*!)", 1)               ; parse optional timeout
+	If @error Then
+		$iTo = $iTimeoutMS
+	Else
+		$iTo = $iTo[0]
+		$sReq = StringTrimLeft($sReq, StringLen($iTo))
+		$iTo = Int(StringTrimRight($iTo, 1))
+		If $iTo > 0 Then $bWait = True
+	EndIf
+	If StringRight($sReq, 1) = "?" Then $bWait = True
+	If $bForceNoWait Then
+		$bWait = False
+		$iTo = 0
+	EndIf
+	Return __viReqQueuePush($oDev, $sReq, $bWait, $iTo)
 EndFunc   ;==>__viReq
 
-Func __viCmd(ByRef $oDev, $sCmd)
-	Return __viReq($oDev, $sCmd, False, 0)
+Func __viCmd(ByRef $oDev, $sCmd, $bForceNoWait = False)
+	If $bForceNoWait Then Return __viReq($oDev, $sCmd, False, 0, True)
+	Return __viReq($oDev, $sCmd, False)
 EndFunc   ;==>__viCmd
 
-Func __viUploadFile(ByRef $oDev, $sFile, $sReq, $iTimeoutMS = 15000)
+
+Func __viUploadFile(ByRef $oDev, $sFile, $sReq, $iTimeoutMS = 5000)
 	Return __viReq($oDev, "upload::" & $sFile & "::" & $sReq, False, $iTimeoutMS)
 EndFunc   ;==>__viUploadFile
 
-Func __viDownloadFile(ByRef $oDev, $sFile, $sReq, $iTimeoutMS = 15000)
+Func __viDownloadFile(ByRef $oDev, $sFile, $sReq, $iTimeoutMS = 5000)
 	Return __viReq($oDev, "download::" & $sFile & "::" & $sReq, True, $iTimeoutMS)
 EndFunc   ;==>__viDownloadFile
 
-Func __viDownloadPicture(ByRef $oDev, $sFile, $sReq, $iTimeoutMS = 15000)
+Func __viDownloadPicture(ByRef $oDev, $sFile, $sReq, $iTimeoutMS = 5000)
 	__viDownloadFile($oDev, $sFile, $sReq, $iTimeoutMS)
-	__viCmd($oDev, "parsePic " & $sFile)
+	__viCmd($oDev, "parsepic " & $sFile)
 EndFunc   ;==>__viDownloadPicture
 
 
@@ -2487,14 +2741,15 @@ EndFunc   ;==>__viSaveScreenShot
 ;				. if command is proceeded by "number!" then the number is used as the timeout for that command
 ;			$sFile = path and name of destination file used for any lines that are proceeded by "#"
 ;			$iTimeoutMS = timeout for file transfers
+;			$iTimeSpacer = ms to wait between commands
 ; out:		all names of downloaded files are pushed into the qret queue, use __viRet to retrieve
-Func __viScript(ByRef $oDev, $vCmds, $sFile = "", $iTimeoutMS = 1000)
+Func __viScript(ByRef $oDev, $vCmds, $sFile = "", $iTimeoutMS = 1000, $iTimeSpacer = 0)
 	Local $aCmds[0]
-	If __IsDictionary($vCmds) Then                      ; check script input and convert it to an array of commands for processing
+	If __IsDictionary($vCmds) Then                          ; check script input and convert it to an array of commands for processing
 		If __DequeIsDeque($vCmds) Then
-			$aCmds = __DequeToArray($vCmds)             ; convert queue to array
+			$aCmds = __DequeToArray($vCmds)                 ; convert queue to array
 		Else
-			Local $sKey, $iCount = $vCmds.Count         ; convert dictionary to array
+			Local $sKey, $iCount = $vCmds.Count             ; convert dictionary to array
 			ReDim $aCmds[$iCount]
 			Local $i = 0
 			For $sKey In $vCmds
@@ -2502,13 +2757,13 @@ Func __viScript(ByRef $oDev, $vCmds, $sFile = "", $iTimeoutMS = 1000)
 				$i += 1
 			Next
 		EndIf
-	ElseIf IsMap($vCmds) Then                           ; convert map to array
+	ElseIf IsMap($vCmds) Then                               ; convert map to array
 		$aCmds = MapKeys($vCmds)
 		Local $i, $n = UBound($aCmds) - 1
 		For $i = 0 To $n
 			$aCmds[$i] = $vCmds[$aCmds[$i]]
 		Next
-	ElseIf IsArray($vCmds) Then                         ; convert 2D array to 1D array
+	ElseIf IsArray($vCmds) Then                             ; convert 2D array to 1D array
 		If UBound($vCmds, 0) = 2 Then
 			Local $m = UBound($vCmds, 2)
 			Local $s, $t, $i, $n = UBound($vCmds, 1)
@@ -2523,20 +2778,21 @@ Func __viScript(ByRef $oDev, $vCmds, $sFile = "", $iTimeoutMS = 1000)
 				$aCmds[$i] = $s
 			Next
 		Else
-			$aCmds = $vCmds                             ; already a 1D array, no conversion needed
+			$aCmds = $vCmds                                 ; already a 1D array, no conversion needed
 		EndIf
-	Else                                                ; convert string to array
+	Else                                                    ; convert string to array
 		If IsBinary($vCmds) Then $vCmds = BinaryToString($vCmds)
 		$aCmds = StringSplit($vCmds, @CR & @LF, 0)
 		$aCmds[0] = ""    ; make the 1-indexed array a 0-indexed array with an empty command in the front
 	EndIf
 
 	Local $i, $sCmd, $n = UBound($aCmds) - 1, $iMode, $iTo
-	For $i = 0 To $n                                                            ; send commands to the queue
+	For $i = 0 To $n                                        ; send commands to the queue
 		$sCmd = StringStripWS($aCmds[$i], 3)
-		If $sCmd = "" Then ContinueLoop                                         ; skip blank lines
+		If $sCmd = "" Then ContinueLoop                     ; skip blank lines
+		If StringLeft($sCmd, 2) = "//" Then ContinueLoop    ; skip comment lines
 
-		$iTo = StringRegExp($sCmd, "^([0-9]*!)", 1)                             ; parse optional timeout
+		$iTo = StringRegExp($sCmd, "^([0-9]*!)", 1)         ; parse optional timeout
 		If @error Then
 			$iTo = 0
 		Else
@@ -2545,14 +2801,14 @@ Func __viScript(ByRef $oDev, $vCmds, $sFile = "", $iTimeoutMS = 1000)
 			$iTo = Int(StringTrimRight($iTo, 1))
 		EndIf
 
-		$iMode = Number(StringLeft($sCmd, 1) = "#")                             ; parse optional download/picture flag
+		$iMode = Number(StringLeft($sCmd, 1) = "#")         ; parse optional download/picture flag
 		If $iMode Then
-			$iMode += Number(StringMid($sCmd, 2, 1) = "#")                      ; parse "##" picture flag
+			$iMode += Number(StringMid($sCmd, 2, 1) = "#")  ; parse "##" picture flag
 			$sCmd = StringTrimLeft($sCmd, $iMode)
-			If $sFile = "" Then $iMode = 0                                      ; if file not specified then store file data on return queue
+			If $sFile = "" Then $iMode = 0                  ; if file not specified then store file data on return queue
 		EndIf
 		If $iMode Then
-			$sFile = __FileNameAutoIncrement($sFile)                            ; roll $sFile to next available name
+			$sFile = __FileNameAutoIncrement($sFile)        ; roll $sFile to next available name
 			If $iTo = 0 Then $iTo = $iTimeoutMS * 10
 			If $iMode = 2 Then
 				__viDownloadPicture($oDev, $sFile, $sCmd, $iTo)
@@ -2563,6 +2819,7 @@ Func __viScript(ByRef $oDev, $vCmds, $sFile = "", $iTimeoutMS = 1000)
 			If StringLeft($sCmd, 1) = "$" Or StringRight($sCmd, 1) = "?" And $iTo <= 0 Then $iTo = $iTimeoutMS
 			__viReq($oDev, $sCmd, ($iTo > 0), (($iTo = 0) ? $iTimeoutMS : $iTo))
 		EndIf
+		If $iTimeSpacer > 0 Then __viCmd($oDev, "sleep " & $iTimeSpacer)
 	Next
 EndFunc   ;==>__viScript
 
@@ -2640,19 +2897,19 @@ EndFunc   ;==>__viHasRet
 ;				__mbRead
 ; task:			read a register
 ; in:			$oDev = vi device handle
-;				$sDataType = 16 or 32 bit, integer or float = [ "16i" "16f" "32i" "32f" ]
+;				$sDataType = "Nt", n=number of 16-bit words, t=type (i=integer, f=float, s=string)
 ;				$iRegAddr = register address
 ;				$iTimeoutMS = timeout in ms
-Func __mbRead(ByRef $oDev, $sDataType, $iRegAddr, $iTimeoutMS = 3000)
-	Return __viReq($oDev, "modbusread " & $sDataType & " " & $iRegAddr, True, $iTimeoutMS)
+Func __mbRead(ByRef $oDev, $sDataType, $iRegAddr, $iTimeoutMS = 1500, $sPrefix = '')
+	Return __viReq($oDev, $sPrefix & "modbusread " & $sDataType & " " & $iRegAddr, True, $iTimeoutMS)
 EndFunc   ;==>__mbRead
 
-Func __mbReadBl(ByRef $oDev, $sDataType, $iRegAddr, $iTimeoutMS = 3000)
-	Return __viReqBl($oDev, "modbusread " & $sDataType & " " & $iRegAddr, True, $iTimeoutMS)
+Func __mbReadBl(ByRef $oDev, $sDataType, $iRegAddr, $iTimeoutMS = 1500, $sPrefix = '')
+	Return __viReqBl($oDev, $sPrefix & "modbusread " & $sDataType & " " & $iRegAddr, True, $iTimeoutMS)
 EndFunc   ;==>__mbReadBl
 
 Func __mbRet(ByRef $oDev)
-	Return __viRet($oDev)
+	Return __viRet($oDev, True)
 EndFunc   ;==>__mbRet
 Func __mbHasRet($oDev)
 	Return __viHasRet($oDev)
@@ -2663,7 +2920,7 @@ EndFunc   ;==>__mbHasRet
 ;				__mbWrite
 ; task:			write a register
 ; in:			$oDev = vi device handle
-;				$sDataType = 16 or 32 bit, integer or float = [ "16i" "16f" "32i" "32f" ]
+;				$sDataType = "Nt", n=number of 16-bit words, t=type (i=integer, f=float, s=string)
 ;				$iRegAddr = register address
 ;				$nValue = value to write to register
 ; out:			0 if successful or @error
@@ -2689,26 +2946,11 @@ EndFunc   ;==>__mbWrite
 ; Blocking API interface functions
 ;
 ; __viGetID($oDev)								request device id
-; __viReqBl($oDev, $sReq, $bWait)			send request and wait for response, return response
-; __viCmdBl($oDev, $sCmd)					send command (__viReq $bWait=false)
+; __viGetIDbg($oDev)							request device id, but run in background by putting commands in the script queue
+; __viReqBl($oDev, $sReq, $bWait)				send request and wait for response, return response
+; __viCmdBl($oDev, $sCmd)						send command (__viReq $bWait=false)
 ; __viEnd($oDev)								wait for last command to finish then close the connection.  return last response if available
 ;
-
-
-
-
-;			__viGetID
-; task:		request ID from device, if it fails, then switch to other comm protocol and try again
-; in:		$oDev = the IP address of the instrument in the form [raw:]IP[:port]
-; out:		response string from VISA *IDN? request
-Func __viGetID(ByRef $oDev, $iTimeoutMS = 1100, $retry = 1)
-	__viFlushInputBuffer($oDev)                                                    ; when initially connecting we can flush the devices input traffic from any previous interactions
-	Local $sRet = __viReqBl($oDev, $VI_IDN, True, $iTimeoutMS)
-	If Not @error And $sRet <> "" Then Return $sRet
-	If $retry = 0 Then Return SetError(@error, 0, $sRet)
-	__viToggleMode($oDev)                             ; switch between VXI-11 and raw socket modes
-	Return __viGetID($oDev, $iTimeoutMS, 0)           ; try again
-EndFunc   ;==>__viGetID
 
 
 
@@ -2764,18 +3006,14 @@ EndFunc   ;==>__viWaitReply
 Func __viFlush($oDev, $iTimeoutMS = 10000)
 	If Not __viIsInstrument($oDev) Then Return SetError(1, 0, "")
 	Local $iTimer = TimerInit()
-	If Not __viIsIdle($oDev) Then
-		While Not __viIsIdle($oDev) And TimerDiff($iTimer) < $iTimeoutMS        ; wait for command queue to empty
-			__viLoop()
-			Sleep(1)
-		WEnd
-	EndIf
-	If $oDev.Item('waitReply') Then
-		While Not __viHasRet($oDev) And TimerDiff($iTimer) < $iTimeoutMS        ; wait for response
-			__viLoop()
-			Sleep(1)
-		WEnd
-	EndIf
+	While Not __viIsIdle($oDev) And TimerDiff($iTimer) < $iTimeoutMS            ; wait for command queue to empty
+		__viLoop()
+		Sleep(1)
+	WEnd
+	While $oDev.Item('waitReply') And TimerDiff($iTimer) < $iTimeoutMS          ; wait for response
+		__viLoop()
+		Sleep(1)
+	WEnd
 	Local $vR
 	While __viHasRet($oDev)                                                     ; flush all responses out of the response queue
 		$vR = __viRet($oDev)
@@ -2798,6 +3036,53 @@ Func __viEnd($oDev)
 	Return $sRet
 EndFunc   ;==>__viEnd
 
+
+
+
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+; get ID
+
+
+
+;			__viGetID
+; task:		request ID from device, if it fails, then switch to other comm protocol and try again
+; in:		$oDev = the IP address of the instrument in the form [raw:]IP[:port]
+; out:		response string from VISA *IDN? request
+Func __viGetID(ByRef $oDev, $iTimeoutMS = 1000, $retry = 1)
+	__viFlushInputBuffer($oDev)                                                    ; when initially connecting we can flush the devices input traffic from any previous interactions
+	Local $sRet = __viReqBl($oDev, $VI_IDN, True, $iTimeoutMS)
+	If Not @error And $sRet <> "" Then Return $sRet
+	If $retry = 0 Then Return SetError(@error, 0, $sRet)
+	__viToggleMode($oDev)                                   ; switch between VXI-11 and raw socket modes
+	$sRet = __viGetID($oDev, $iTimeoutMS, 0)                ; try again
+	If Not @error And $sRet <> "" Then Return $sRet
+	$sRet = __F4TgetID($oDev, $iTimeoutMS)                  ; try modbus
+	If Not @error Then Return $sRet
+	Return ""
+EndFunc   ;==>__viGetID
+
+
+
+Func __viGetIDbg(ByRef $oDev, $rVar = "", $iTimeoutMS = 1000, $retry = 1)
+	If StringLeft($rVar, 1) = "$" Then $rVar = StringTrimLeft($rVar, 1)
+	Local $aCmds[] = [ _
+			"flush", _                                      ; flush input buffer
+			"$" & $rVar & "=" & $VI_IDN, _                  ; try to read IDN from device
+			"sleep 50", _                                   ; add a short delay to give instrument a breath
+			"if $" & $rVar & "=''", _                       ; if no IDN then
+			"{__viToggleMode($oDev)}", _                    ;   switch comm mode VXI-11 / raw socket
+			"$" & $rVar & "=" & $VI_IDN, _                  ;   try to read IDN from device
+			"end", _                                        ; endif
+			'']
+	__viScript($oDev, $aCmds)
+EndFunc   ;==>__viGetIDbg
 
 
 
@@ -2854,10 +3139,7 @@ Func __viScriptFile(ByRef $oDev, $sFile)
 	While 1
 		$sLine = StringStripWS(FileReadLine($hFile), 3)
 		If @error Then ExitLoop
-		If StringLeft($sLine, 1) = "#" Then ContinueLoop                                ; skip comment lines
-		If $sLine = "" Then ContinueLoop                                                ; skip blank lines
-		$sLine = StringStripWS($sLine, 3)
-		__viCmd($oDev, $sLine)
+		__viCmd($oDev, StringStripWS($sLine, 3))
 	WEnd
 	FileClose($hFile)
 EndFunc   ;==>__viScriptFile
@@ -2876,6 +3158,469 @@ EndFunc   ;==>__viScriptFile
 ;-----------------------------------------------------------------------------------------------------------------------------------
 ;-----------------------------------------------------------------------------------------------------------------------------------
 ;-----------------------------------------------------------------------------------------------------------------------------------
+
+; TCP socket functions
+
+
+
+
+; =======================================================================================================================
+; Function Name:    __TCP_IsConnected
+; Description:      Checks if a TCP socket connection is still alive and active without blocking execution.
+; Parameter(s):     $hSocket - The AutoIt TCP socket identifier variable.
+; Return Value(s):  True  - The socket is open and actively connected.
+;                   False - The socket has disconnected, timed out, or encountered a hardware error.
+; =======================================================================================================================
+Func __TCP_IsConnected($hSocket)
+	If IsArray($hSocket) Then $hSocket = $hSocket[0]                        ; Extract raw Win32 socket handle descriptor if AutoIt passed it as a tracking array
+	$hSocket = Number($hSocket)
+	If $hSocket <= 0 Then Return False
+	Local $tMode = DllStructCreate("ulong")                                 ; --- STEP 1: FORCE SOCKET INTO NON-BLOCKING MODE ---
+	DllStructSetData($tMode, 1, 1)                                          ; FIONBIO constant = 0x8004667E. Mode = 1 (Non-blocking)
+	DllCall("ws2_32.dll", "int", "ioctlsocket", "handle", $hSocket, _
+			"long", 0x8004667E, "struct*", $tMode)
+	If @error Then Return False
+	Local $iErr = 0
+	Local $bConnected = False
+	Local $tBuffer = DllStructCreate("byte")                                ; --- STEP 2: RUN THE VERIFICATION PEEK VIA WINSOCK RECV ---
+	Local $aRecv = DllCall("ws2_32.dll", "int", "recv", _                   ; MSG_PEEK = 0x02. We use a tiny 1-byte binary buffer target.
+			"handle", $hSocket, _
+			"struct*", $tBuffer, _
+			"int", 1, _
+			"int", 0x02) ; MSG_PEEK
+	If Not @error Then
+		Local $iBytesReturned = $aRecv[0]
+		If $iBytesReturned = 0 Then
+			$bConnected = False                                             ; A clean return of 0 bytes during a read indicates a graceful connection close by the remote host
+		ElseIf $iBytesReturned = -1 Then
+			Local $aErr = DllCall("ws2_32.dll", "int", "WSAGetLastError")   ; Grab the specific Winsock failure reason code
+			If Not @error Then $iErr = $aErr[0]                             ; If it throws 10035 (WSAEWOULDBLOCK), the socket is healthy but simply empty!
+			If $iErr <> 10035 Then $bConnected = False                      ; Any other code (10054 Connection Reset, 10053 Aborted, etc.) means it is dead.
+		EndIf
+	EndIf
+	DllStructSetData($tMode, 1, 0)                                          ; --- STEP 3: RESTORE SOCKET BACK TO BLOCKING MODE ---
+	DllCall("ws2_32.dll", "int", "ioctlsocket", _                           ; Mode = 0 (Standard AutoIt blocking behavior)
+			"handle", $hSocket, "long", 0x8004667E, "struct*", $tMode)
+	Return SetError($iErr, 0, $bConnected)                                  ; return result
+EndFunc   ;==>__TCP_IsConnected
+
+
+
+Func __TCP_IsOpen($hSocket)                                                 ; Returns True if the socket connection is open.  False if it is closed or broken.
+	If IsArray($hSocket) Then $hSocket = $hSocket[0]                        ; Extract raw Win32 socket handle descriptor if AutoIt passed it as a tracking array
+	$hSocket = Number($hSocket)
+	If $hSocket <= 0 Then Return False
+	Local $tTimeVal = DllStructCreate("long tv_sec; long tv_usec;")         ; 1. Define a TIMEVAL struct with a 0-second timeout (Forces the call to be non-blocking)
+	DllStructSetData($tTimeVal, "tv_sec", 0)
+	DllStructSetData($tTimeVal, "tv_usec", 0)
+	Local $tFdExcept = DllStructCreate("uint fd_count; uint fd_array[1];")  ; 2. Define an fd_set struct (Contains count of sockets followed by the socket array)
+	DllStructSetData($tFdExcept, "fd_count", 1)                             ; [int fd_count; int fd_array[1]]
+	DllStructSetData($tFdExcept, "fd_array", $hSocket, 1)
+	Local $aRet = DllCall("Ws2_32.dll", "int", "select", _                  ; 3. Use Ws2_32.dll select() to peek at exceptions on the socket
+			"int", 0, _                                                     ; select(0, readfds, writefds, exceptfds, timeout)
+			"ptr", 0, _ ; Not monitoring for readable data
+			"ptr", 0, _ ; Not monitoring for writeable space
+			"struct*", $tFdExcept, _ ; Monitoring for errors/disconnections
+			"struct*", $tTimeVal)    ; Non-blocking timeout pointer
+	If @error Then Return False                                             ; Handle DllCall failure
+	__ConsolePrintVars("__TCP_IsOpen, ", "aRet", $aRet, "hSocket", $hSocket)
+	Return (0 = $aRet[0])                                                   ; return true if status is 0 - all ok
+	;Local $iReadySockets = $aRet[0]                                        ; select returns the total number of sockets matching the condition
+	;If $iReadySockets > 0 Then Return False                                ; The socket triggered an exception (disconnected, reset, or broken)
+	;If $iReadySockets < 0 Then Return False                                ; select returned a socket error (e.g., -1 means the descriptor is invalid/already dead)
+	;Return True                                                            ; 0 sockets triggered an exception, meaning the connection is alive and healthy
+EndFunc   ;==>__TCP_IsOpen
+
+
+
+
+; =======================================================================================================================
+; Function Name:    __TCP_IsDataAvailable
+; Description:      Checks if there is incoming data waiting to be read in the socket buffer without blocking.
+; Parameter(s):     $hSocket - The AutoIt TCP socket identifier variable.
+; Return Value(s):  True  - Data is waiting in the buffer. Safe to call TCPRecv() instantly.
+;                   False - No data is available to read at this moment.
+; =======================================================================================================================
+Func __TCP_IsDataAvailable($hSocket)
+	If IsArray($hSocket) Then $hSocket = $hSocket[0]                        ; Extract raw Win32 socket handle descriptor if AutoIt passed it as a tracking array
+	$hSocket = Number($hSocket)
+	If $hSocket <= 0 Then SetError(2, 0, False)                             ;@error=2: Invalid handle
+	Local $tFD_SET = DllStructCreate("uint fd_count;handle fd_array")       ; Create a Win32 fd_set structure layout template
+	DllStructSetData($tFD_SET, "fd_count", 1)                               ; struct fd_set { u_int fd_count; SOCKET fd_array[1]; }
+	DllStructSetData($tFD_SET, "fd_array", $hSocket, 1)
+	Local $tTimeVal = DllStructCreate("long tv_sec;long tv_usec")           ; Create an immediate-timeout timeval structure (0 seconds, 0 microseconds)
+	DllStructSetData($tTimeVal, "tv_sec", 0)
+	DllStructSetData($tTimeVal, "tv_usec", 0)
+	Local $aRet = DllCall("ws2_32.dll", "int", "select", _                  ; Call the Winsock select API targeting readfds (the second parameter)
+			"int", 0, _                                                     ;   nfds (ignored in Windows)
+			"struct*", $tFD_SET, _                                          ;   readfds (checks if data is ready to read)
+			"ptr", 0, _                                                     ;   writefds (omitted)
+			"ptr", 0, _                                                     ;   exceptfds (omitted)
+			"struct*", $tTimeVal)                                           ;   timeout structure pointer
+	If @error Then Return SetError(3, 0, False)                             ;@error=3: DLL Call crashed
+	If $aRet[0] < 0 Then                                                    ; If select returns a negative number, the socket itself has structural errors
+		Local $aWSAErr = DllCall("ws2_32.dll", "int", "WSAGetLastError")
+		Return SetError(1, $aWSAErr[0], False)                              ;@error=1: Dead socket, @extended=Winsock Error Code
+	EndIf
+	If $aRet[0] = 0 Then Return False                                       ; Healthy socket, no data available
+	Local $tBuffer = DllStructCreate("byte")                                ; If select > 0, check if it's real data or a termination notification
+	Local $aRecv = DllCall("ws2_32.dll", "int", "recv", _                   ; recv, PEEK, to check status
+			"handle", $hSocket, _
+			"struct*", $tBuffer, _
+			"int", 1, _
+			"int", 2) ; MSG_PEEK
+	If @error Then Return SetError(3, 0, False)                             ;@error=3: DLL Call crashed
+	If $aRecv[0] <= 0 Then                                                  ; If error state returned from PEEK
+		Local $aWSAErr = DllCall("ws2_32.dll", "int", "WSAGetLastError")    ; WSAGetLastError:  0=clean close, 10057=not connected, 10054=reset
+		Return SetError(1, $aWSAErr[0], False)                              ;@error=1: Disconnected, @extended=Winsock Error Code
+	EndIf
+	Return True                                                             ; Socket is 100% healthy and data is available
+EndFunc   ;==>__TCP_IsDataAvailable
+
+
+
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+Func __viClassifyItem($sId)
+	Local $sType = ""
+	If StringInStr($sId, ",MSO") Or StringInStr($sId, ",DPO") Then
+		$sType = "sc Oscilloscope"
+	ElseIf StringInStr($sId, ",F4T") Or StringInStr($sId, ",F4T") Then
+		$sType = "tc Chamber"
+	ElseIf StringInStr($sId, ",5323") Or StringInStr($sId, ",5313") Then
+		$sType = "fc Frequency Counter"
+	ElseIf StringInStr($sId, ",N670") Or StringInStr($sId, ",E363") Then
+		$sType = "dc DC Power Supply"
+	EndIf
+	Return $sType
+EndFunc   ;==>__viClassifyItem
+
+
+
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+
+
+Func __viGTL(ByRef $oDev)                               ; send universal Go-To-Local command to release control of device to local user
+	__viCmd($oDev, $VI_GTL)
+EndFunc   ;==>__viGTL
+
+
+
+
+
+
+
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;
+; Test Equity F4T thermal chamber modbus TCP communication functions
+;
+
+
+
+Global $g_F4T_REGMAP[][2] = [ _             ; DataMap 1, 2.   1=32f, 2=16i*10
+		[2782, 300], _                      ; 0=Temperature setpoint (32f,16i)
+		[27586, 100], _                     ; 1=measured temperature (32f,16i)
+		[16594, 2000], _                    ; 2=enable (on/off) (16i,16i)
+		[2804, 103], _                      ; 3=heating power
+		[2806, 107], _                      ; 4=cooling power
+		[6730, 901], _                      ; 5=temperature units.  BitAnd(x,1) -> 1=C, 0=F
+		[0, 0]]
+
+Global Const $g_iF4Tsetpoint = 0            ; index in F4T REGMAP for the temperature setpoint
+Global Const $g_iF4Ttemperature = 1         ; index in F4T REGMAP for the temperature measurement
+Global Const $g_iF4Tenable = 2              ; index in F4T REGMAP for the enable (on/off)
+Global Const $g_iF4Theat = 3                ; index for heating power
+Global Const $g_iF4Tcool = 4                ; index for cooling power
+Global Const $g_iF4Tunits = 5               ; index for units register
+
+
+
+
+; -----------------------------
+; -----------------------------
+; -----------------------------
+; -----------------------------
+;
+; F4T read/write temperature and enable state
+
+
+
+
+Func __F4Ttemperature(ByRef $oDev)                              ; get chamber temperature measurement in C
+	Return __F4TtoC($oDev, __F4Tread($oDev, $g_iF4Ttemperature))
+EndFunc   ;==>__F4Ttemperature
+
+
+Func __F4Tsetpoint(ByRef $oDev, $fValue = -1000)                ; get or set chamber temperature setpoint
+	;ConsoleWrite("__F4Tsetpoint()" & @CRLF)
+	If @NumParams > 1 Then Return __F4Twrite($oDev, $g_iF4Tsetpoint, ($oDev.Item('f4tUnits') = 0) ? __TemperatureCtoF($fValue) : $fValue)
+	Return __F4TtoC($oDev, __F4Tread($oDev, $g_iF4Tsetpoint))
+EndFunc   ;==>__F4Tsetpoint
+
+
+Func __F4Tenable(ByRef $oDev, $bValue = False)                  ; get chamber on/off status, or turn on/off chamber
+	If @NumParams > 1 Then Return __F4Twrite($oDev, $g_iF4Tenable, $bValue)
+	Return __F4Tread($oDev, $g_iF4Tenable)
+EndFunc   ;==>__F4Tenable
+
+
+Func __F4Theat(ByRef $oDev)                                     ; read the current heating power
+	Return __F4Tread($oDev, $g_iF4Theat)
+EndFunc   ;==>__F4Theat
+
+
+Func __F4Tcool(ByRef $oDev)                                     ; read the current cooling power
+	Return __F4Tread($oDev, $g_iF4Tcool)
+EndFunc   ;==>__F4Tcool
+
+
+
+Func __F4TtoC(ByRef $oDev, $fT)                                 ; convert T to deg C if it is in F
+	If Not __F4Tresolve($oDev) Then Return SetError(-1, 0, -1000)
+	If $oDev.Item('f4tUnits') = 0 Then $fT = __TemperatureFtoC($fT)
+	Return $fT
+EndFunc   ;==>__F4TtoC
+
+
+
+
+
+; -----------------------------
+; -----------------------------
+; -----------------------------
+; -----------------------------
+;
+;
+; F4T read/write holding registers
+
+
+
+
+;			__F4Tread
+; task:		read a register from F4T chamber
+;			if dataMap=1 then read 32 bit float
+;			else read 16 bit int and divide by 10
+; in:		$iRegIndex = register indexed in $g_F4T_REGMAP (0=target, 1=temperature, 2=enable)
+; out:		floating point number read from register, or 0/1 if regindex=2
+Func __F4Tread(ByRef $oDev, $iRegIndex)
+	;ConsoleWrite("__F4Tread() before __F4TResolve " & VarGetType($oDev) & @CRLF)
+	If Not __F4Tresolve($oDev) Then Return SetError(-1, 0, -1000)
+	;ConsoleWrite("__F4Tread() after __F4TResolve" & @CRLF)
+	If $iRegIndex < 0 Or UBound($g_F4T_REGMAP, 1) <= $iRegIndex Then Return SetError(-2, 0, -1000)
+	Local $iDataMap = $oDev.Item('f4tDataMap')
+	Local $r
+	;ConsoleWrite("__F4Tread()" & @CRLF)
+	If $iDataMap = 1 And $iRegIndex <> 2 Then _
+			Return __mbReadBl($oDev, "2f", $g_F4T_REGMAP[$iRegIndex][0])                    ; datamap 1, reading temperature or setpoint
+	$r = __mbReadBl($oDev, "1i", $g_F4T_REGMAP[$iRegIndex][$iDataMap - 1])
+	If $iRegIndex <> 2 Then Return $r / 10                                                  ; datamap 2, read 16bit int and divide by 10
+	Return BitAND(Int($r), 1) = 1                                                           ; read enable state, datamap 1: 63=on / 62=off
+	;                                                                                   	; enable state datamap 2: 1=on / 0=off
+EndFunc   ;==>__F4Tread
+
+
+
+;			__F4TreadBg
+; task:		read a register from F4T chamber - run in background
+;			if dataMap=1 then read 32 bit float
+;			else read 16 bit int and divide by 10
+; in:		$iRegIndex = register indexed in $g_F4T_REGMAP (0=target, 1=temperature, 2=enable)
+;			$sVar = variable name to save the data into
+; out:		floating point number read from register, or 0/1 if regindex=2
+Func __F4TreadBg(ByRef $oDev, $iRegIndex, $sVar)
+	If $sVar <> "" Then
+		If StringLeft($sVar, 1) <> "$" Then $sVar = "$" & $sVar
+		$sVar &= "="
+	EndIf
+	If Not __F4Tresolve($oDev) Then Return SetError(-1, 0, -1000)
+	If $iRegIndex < 0 Or UBound($g_F4T_REGMAP, 1) <= $iRegIndex Then Return SetError(-2, 0, -1000)
+	Local $iDataMap = $oDev.Item('f4tDataMap')
+	If $iDataMap = 1 And $iRegIndex <> 2 Then _
+			Return __mbRead($oDev, "2f", $g_F4T_REGMAP[$iRegIndex][0], 1000, $sVar)         ; datamap 1, reading temperature or setpoint
+	Return __mbRead($oDev, "1i", $g_F4T_REGMAP[$iRegIndex][$iDataMap - 1], 1000, $sVar)     ; datamap 2 or datamap 1 reading enable state
+EndFunc   ;==>__F4TreadBg
+
+Func __F4TreadBgProcReply(ByRef $oDev, $iRegIndex, $nValue)                                 ; process received value of read register after being received
+	Local $iDataMap = $oDev.Item('f4tDataMap')
+	If $iDataMap = 1 And $iRegIndex <> 2 Then Return $nValue                                ; datamap 1 temperature register - no conversion needed
+	If $iRegIndex <> 2 Then Return Int($nValue) / 10                                        ; datamap 2 temperature register - divide integer by 10 for 1 decimal place floating point number
+	Return BitAND(Int($nValue), 1) = 1                                                      ; read enable state, datamap 1: 63=on / 62=off.  datamap 2: 1=on / 0=off
+EndFunc   ;==>__F4TreadBgProcReply
+
+
+
+
+;			__F4Twrite
+; task:		write a register in the F4T chamber
+;			if dataMap=1 then  32 bit float
+;			else times 10 and store as 16 bit int
+; in:		$iRegIndex = register index in $g_F4T_REGMAP (0=target, 1=temperature, 2=enable)
+;			$fValue = floating point number to write
+; out:		@error = nonzero if error
+Func __F4Twrite(ByRef $oDev, $iRegIndex, $fValue)
+	;ConsoleWrite("__F4Twrite() before __F4TResolve" & @CRLF)
+	If Not __F4Tresolve($oDev) Then Return SetError(-1, 0, 0)
+	If $iRegIndex < 0 Or UBound($g_F4T_REGMAP, 1) <= $iRegIndex Then Return SetError(-2, 0, 0)
+	;ConsoleWrite("__F4Twrite() after __F4TResolve" & @CRLF)
+	Local $iDataMap = $oDev.Item('f4tDataMap')
+	If $iDataMap = 1 And $iRegIndex <> 2 Then _
+			Return __mbWrite($oDev, "2f", $g_F4T_REGMAP[$iRegIndex][0], $fValue)            ; datamap 1: write 32bit float for temperature
+	Local $iR = Int($fValue)                                                                ; datamap 2, enable state = 1/0
+	If $iDataMap = 1 Then $iR = BitOR($iR, 62)                                              ; datamap 1, enable = 63/62
+	If $iRegIndex <> 2 Then $iR = Int(10 * $fValue)                                         ; datamap 2: float times 10 writen into 16 bit int
+	Return __mbWrite($oDev, "1i", $g_F4T_REGMAP[$iRegIndex][$iDataMap - 1], $iR)
+EndFunc   ;==>__F4Twrite
+
+
+
+
+; -----------------------------
+; -----------------------------
+; -----------------------------
+; -----------------------------
+;
+; F4T open functions
+
+
+
+; task:		resovle $oDev into an instrument handle that is prepared for modbus tcp comms with F4T thermal chamber
+; in:		ip address or instrument handle
+; out:		false if error, true if successful
+;			$oDev pointing at instrument handle if possible
+Func __F4Tresolve(ByRef $oDev)
+	If Not __viResolveInstrument($oDev) Then Return False
+	Local $iDataMap = Int($oDev.Item('f4tDataMap'))
+	If $iDataMap < 1 Or 2 < $iDataMap Then __F4TgetDataMap($oDev)
+	Local $iWordOrder = Int($oDev.Item('f4tWordOrder'))
+	If $iWordOrder < 0 Or 1 < $iWordOrder Then __F4TgetWordOrder($oDev)
+	Local $iUnits = Int($oDev.Item('f4tUnits'))
+	If $iUnits < 0 Or 1 < $iUnits Then __F4TgetUnits($oDev)
+	If $g_F4T_PrintResolv Then __ConsolePrintVars("__F4Tresolve, ", "wordOrder", $iWordOrder, "dataMap", $iDataMap, "units", $iUnits)
+	Return True
+EndFunc   ;==>__F4Tresolve
+
+
+
+;			Determine which DataMap setting the F4T chamber has
+; task:		read register 100 and look for a return of 0x8300 (error) datamap 1 does not have register 100, datamap 2 has register 100
+;			if error or no response then assume dataMap 1
+; in:		$oDev = session handle
+; out:		DataMap:  1 (new) or 2 (legacy F4T)
+Func __F4TgetDataMap(ByRef $oDev)
+	If Not __viResolveInstrument($oDev) Then Return
+	Local $t = __mbReadBl($oDev, "1i", 100)
+	Local $iR = ((Int($t / 0x100) = 0x83) Or (@error) Or ($t = 0)) ? 1 : 2
+	$oDev.Item('f4tDataMap') = $iR
+	Return $iR
+EndFunc   ;==>__F4TgetDataMap
+
+
+
+;			Determine which modbus word order setting the F4T chamber has
+; task:		read16 register 6736 (ethernet) or 14092 (modbus).  1331 = low-high, 1330 = high-low
+; in:		$oDev = session handle
+; out:		word order 0 = low-high, 1 = high-low
+Func __F4TgetWordOrder(ByRef $oDev)
+	If Not __viResolveInstrument($oDev) Then Return SetError(-1, 0, 0)
+	Local $iWordOrder = 1                                                   ; default to high-low word order if datamap = 2 as datamap 2 does not use 32-bit numbers
+	If $oDev.Item('f4tDataMap') = 1 Then
+		Local $iR = __mbReadBl($oDev, "1i", 14092)
+		If BitOR($iR, 1) <> 1331 Then $iR = __mbReadBl($oDev, "1i", 6736)
+		If BitOR($iR, 1) = 1331 Then $iWordOrder = Int(Not BitAND($iR, 1))
+	EndIf
+	$oDev.Item('f4tWordOrder') = $iWordOrder
+	Return $iWordOrder
+EndFunc   ;==>__F4TgetWordOrder
+
+
+
+Func __F4TgetUnits(ByRef $oDev)                    ; returns 1 for C, 0 for F
+	If Not __viResolveInstrument($oDev) Then Return SetError(-1, 0, 1)
+	Local $u = 1
+	If $oDev.Item('f4tDataMap') = 1 Then
+		$u = (Int(__mbReadBl($oDev, "1i", 6730), 1) = 15)
+	Else
+		$u = Int(BitAND(__mbReadBl($oDev, "1i", 901), 1))
+	EndIf
+	$oDev.Item('f4tUnits') = $u
+	Return $u
+EndFunc   ;==>__F4TgetUnits
+
+
+
+
+Func __F4TgetID(ByRef $oDev, $iTimeoutMS = 1000)
+	; Manufacturer, Model, Serial Number, Firmware Level
+	If Not __F4Tresolve($oDev) Then Return
+	Local $sMfg, $sModel, $iSN, $iRel
+	If $oDev.Item('f4tDataMap') = 1 Then
+		$iSN = __mbReadBl($oDev, "2i", 12, $iTimeoutMS)
+		If @error Or $iSN = 0 Then Return SetError(@error, @extended, "")
+		$iRel = __mbReadBl($oDev, "2i", 3, $iTimeoutMS)
+		If @error Or $iRel = 0 Then Return SetError(@error, @extended, "")
+		$sMfg = __mbReadBl($oDev, "30s", 46, $iTimeoutMS)
+		If @error Or $sMfg = "" Then Return SetError(@error, @extended, "")
+		$sMfg = StringStripWS($sMfg, 3)
+		$sModel = __mbReadBl($oDev, "15s", 16, $iTimeoutMS)
+		If @error Then Return SetError(@error, @extended, "")
+		$sModel = StringStripWS($sModel, 3)
+	Else
+		$sMfg = __mbReadBl($oDev, "1i", 3, $iTimeoutMS)
+		If @error Or $sMfg = 0 Then Return SetError(@error, @extended, "")
+		$sModel = __mbReadBl($oDev, "1i", 0, $iTimeoutMS)
+		If @error Or $sModel = 0 Then Return SetError(@error, @extended, "")
+		$iSN = "" ; __mbReadBl($oDev, "", 36)
+		$iRel = StringFormat("%02i.%05i", __mbReadBl($oDev, "1i", 4, $iTimeoutMS), __mbReadBl($oDev, "1i", 30, $iTimeoutMS))
+		If @error Then Return SetError(@error, @extended, "")
+	EndIf        ;
+	Return $sMfg & "," & $sModel & "," & $iSN & "," & $iRel
+EndFunc   ;==>__F4TgetID
+
+
+
+
+
+
+; -----------------------------
+; -----------------------------
+; -----------------------------
+; -----------------------------
+;
+;
+
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+;-----------------------------------------------------------------------------------------------------------------------------------
+
 
 
 
