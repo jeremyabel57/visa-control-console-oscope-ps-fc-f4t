@@ -2,7 +2,7 @@
 
 Global $SEP = Opt("GUIDataSeparatorChar")
 
-Opt("GUIOnEventMode", 1) 						; Enable GUI OnEvent Mode globally
+Opt("GUIOnEventMode", 1)                         ; Enable GUI OnEvent Mode globally
 
 
 #include <ColorConstants.au3>
@@ -30,6 +30,28 @@ Global Const $ICON_FOLDER2 = ChrW32(0x1F4C2)
 Global Const $ICON_SAVE = $ICON_FLOPPY
 Global Const $ICON_OPEN = $ICON_FOLDER2
 Global Const $ICON_CHECK = ChrW(0x2713)
+Global Const $ICON_INFO1 = ChrW(0x2139)
+Global Const $ICON_INFO2 = ChrW32(0x1F6C8)
+
+Global Const $ICON_NWARROW1 = ChrW(0x2196)      ; direction arrows
+Global Const $ICON_NWARROW2 = ChrW32(0x1F874)
+Global Const $ICON_NEARROW1 = ChrW(0x2197)
+Global Const $ICON_NEARROW2 = ChrW32(0x1F875)
+Global Const $ICON_SEARROW1 = ChrW(0x2198)
+Global Const $ICON_SEARROW2 = ChrW32(0x1F876)
+Global Const $ICON_SWARROW1 = ChrW(0x2199)
+Global Const $ICON_SWARROW2 = ChrW32(0x1F877)
+
+Global Const $ICON_NARROW1 = ChrW(0x2191)
+Global Const $ICON_NARROW2 = ChrW32(0x1F851)
+Global Const $ICON_WARROW1 = ChrW(0x2192)
+Global Const $ICON_WARROW2 = ChrW32(0x1F850)
+Global Const $ICON_EARROW1 = ChrW(0x2194)
+Global Const $ICON_EARROW2 = ChrW32(0x1F852)
+Global Const $ICON_SARROW1 = ChrW(0x2195)
+Global Const $ICON_SARROW2 = ChrW32(0x1F853)
+
+
 
 
 Global Const $COLOR_NEUTRAL = 0xFDFDFD
@@ -59,7 +81,7 @@ Func ChrW32($iCodePoint)
 
 	; 2. Apply bitwise shifts or standard division/modulo operators
 	Local $iHighSurrogate = Int($iBase / 0x400) + 0xD800
-	Local $iLowSurrogate  = Mod($iBase, 0x400) + 0xDC00
+	Local $iLowSurrogate = Mod($iBase, 0x400) + 0xDC00
 
 	; 3. Concatenate the two 16-bit segments together into a single string stream
 	Return ChrW($iHighSurrogate) & ChrW($iLowSurrogate)

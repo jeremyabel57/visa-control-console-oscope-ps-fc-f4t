@@ -346,8 +346,8 @@ EndFunc   ;==>tcTab_SetTemperature
 
 ; chamber output state - on/off
 
-Func tcTab_GuiSetOutputState($bState, $bSelf = True, $cBtn = $g_tc_hPowerBtn)
-	__GuiToggleButtonSetOnState($cBtn, $bState, $bSelf, 0xFFFF00, $COLOR_BLACK, 0xFDFDFD, $COLOR_BLACK, True)
+Func tcTab_GuiSetOutputState($bState, $bImmed = True, $cBtn = $g_tc_hPowerBtn)
+	__GuiToggleButtonSetOnState($cBtn, $bState, $bImmed, 0xFFFF00, $COLOR_BLACK, 0xFDFDFD, $COLOR_BLACK, True)
 	;GUICtrlSetBkColor($cBtn, $bState ? 0xFFFF00 : 0xFDFDFD)
 	;GUICtrlSetData($cBtn, $bState ? "On" : "Off")
 EndFunc   ;==>tcTab_GuiSetOutputState

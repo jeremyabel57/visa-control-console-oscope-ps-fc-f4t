@@ -50,12 +50,22 @@ Func scTab_TabGuiCreate($iTabIdx, $oCanvas)
 			]
 
 	Local $iW = __IsDictionary($oCanvas) ? $oCanvas.Item('iW') : 600
-	Local $i, $n = UBound($aBtns) - 1, $c, $s
-	Local $aCtrls[$n + 2]       ; making room for IpAddr field
+	Local $i, $n = UBound($aBtns) - 1, $c, $s, $m = 0
+	Local $aCtrls[0]
+	If $oCanvas.Exists('aTabCtrls') Then
+		$aCtrls = $oCanvas.Item('aTabCtrls')
+		If IsArray($aCtrls) Then
+			$m = UBound($aCtrls)
+		Else
+			Dim $aCtrls[0]
+		EndIf
+	EndIf
+	ReDim $aCtrls[$n + $m + 2]   ; add room for additional controls we added here
+
 	For $i = 0 To $n
-		$c = GUICtrlCreateButton($aBtns[$i][0], $iW - $iBtnScale - $iRight - ($iBtnScale + $iBtnSpace) * ($n - $i), $iTop, _
+		$c = GUICtrlCreateButton($aBtns[$i][0], $iW - $iBtnScale - $iRight - ($iBtnScale + $iBtnSpace) * ($n - $i + 1), $iTop, _
 				$iBtnScale, $iBtnScale, BitOR($GUI_SS_DEFAULT_BUTTON, $BS_CENTER, $BS_VCENTER, $SS_CENTERIMAGE))
-		$aCtrls[$i] = GUICtrlGetHandle($c)
+		$aCtrls[$i + $m] = GUICtrlGetHandle($c)
 		GUICtrlSetFont(-1, $aBtns[$i][1], $aBtns[$i][2])
 		GUICtrlSetResizing(-1, BitOR($GUI_DOCKTOP, $GUI_DOCKRIGHT, $GUI_DOCKSIZE, $GUI_DOCKHEIGHT))
 		$s = $aBtns[$i][3]
@@ -68,9 +78,9 @@ Func scTab_TabGuiCreate($iTabIdx, $oCanvas)
 	scTab_SetUpMenu($hTbo_Menu)
 
 	Local $icW = 150
-	Local $iX = $iW - $iRight - ($iBtnScale + $iBtnSpace) * ($n + 1) - $icW
+	Local $iX = $iW - $iRight - ($iBtnScale + $iBtnSpace) * ($n + 2) - $icW
 	$g_sc_hIpAddr = GUICtrlCreateCombo("|192.168.0.14", $iX, $iTop, $icW, 17)                       ; place to store ip address
-	$aCtrls[$n + 1] = $g_sc_hIpAddr
+	$aCtrls[$n + 1 + $m] = $g_sc_hIpAddr
 	GUICtrlSetResizing(-1, BitOR($GUI_DOCKTOP, $GUI_DOCKRIGHT, $GUI_DOCKSIZE, $GUI_DOCKHEIGHT))
 	GUICtrlSetOnEvent(-1, "scTab_OnRefreshBtn")
 
@@ -78,7 +88,7 @@ Func scTab_TabGuiCreate($iTabIdx, $oCanvas)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetState(-1, $GUI_HIDE)
 
-	$oCanvas.Item('aCtrls') = $aCtrls                                                                   ; set aZoomControls for later processing
+	$oCanvas.Item('aTabCtrls') = $aCtrls                                                            ; set aZoomControls for later processing
 EndFunc   ;==>scTab_TabGuiCreate
 
 
@@ -203,7 +213,7 @@ Func scTab_OnScreenShotBtn()
 			'FILESystem:DELEte "C:/Temp2_Scope.png"' & @CRLF & _
 			'FILESystem:DELEte "C:/Temp_Scope.png"'
 
-	if not $g_sc_bCommValid then $g_sc_oDev = scTab_GetIP()
+	If Not $g_sc_bCommValid Then $g_sc_oDev = scTab_GetIP()
 	__viScript($g_sc_oDev, $sCmds, $sLocalFilePath, 5000)
 	$sLocalFilePath = __viFlush($g_sc_oDev)
 	If Not @error Then MsgBox($MB_ICONINFORMATION, "Success", "Screenshot successfully saved to: " & @CRLF & $sLocalFilePath)
@@ -232,7 +242,7 @@ EndFunc   ;==>scTab_OnCfgBtn
 
 
 Func scTab_OnScriptMenu()
-	if not $g_sc_bCommValid then $g_sc_oDev = scTab_GetIP()
+	If Not $g_sc_bCommValid Then $g_sc_oDev = scTab_GetIP()
 	Local $i, $iClickedID = @GUI_CtrlId                             ; @GUI_CtrlId contains the explicit Control ID of the menu option clicked
 	Local $n = UBound($g_aMenuList) - 1
 	For $i = 0 To $n

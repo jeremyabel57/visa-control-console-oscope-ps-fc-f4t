@@ -275,3 +275,28 @@ EndFunc   ;==>_Bits
 ;
 
 
+
+
+;		convert number fN to a prety print string including its order of magnitude/exponent prefix
+Func __NumEgr($f, $p = 2)
+	$f = Number($f)
+	Local $a = ["Q", 30, "R", 27, "Y", 24, "Z", 21, "E", 18, "P", 15, "T", 12, "G", 9, "M", 6, "k", 3, "", 0, "m", -3, "u", -6, "n", -9, "p", -12, "f", -15, "a", -18, "z", -21, "y", -24, "r", -27, "q", -30]
+	Local $i, $n = ubound($a) - 1, $e
+	$g = Abs($f)
+	For $i = 0 To $n Step 2
+		$e = 10 ^ $a[$i + 1]
+		If $g >= $e Then ExitLoop
+	Next
+	Return StringFormat("%." & $p & "f " & $a[$i], $f / $e)
+EndFunc   ;==>__NumMetricPrefix
+
+
+
+
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+; ---------------------------------------
+;
+
+

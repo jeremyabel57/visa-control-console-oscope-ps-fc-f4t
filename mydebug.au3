@@ -104,11 +104,13 @@ Func __sPrintVar($vVar, $sSep = ", ", $sName = "", $bEOL = False)
 
 	ElseIf __dbgIsDictionary($vVar) Then    ; dictionary
 		$s &= "[" & $vVar.Count & "]) "
+		Local $bQueue = $vVar.Exists('head') And $vVar.Exists('tail')
 		Local $bF = True
 		Local $sKey
 		$s &= "( "
 		For $sKey In $vVar
 			Local $sVal = $vVar.Item($sKey)
+			If $bQueue And (StringIsDigit($sKey) Or $sKey = "head" Or $sKey = "tail") Then ContinueLoop
 			If $bF Then
 				$bF = False
 			Else
@@ -116,6 +118,19 @@ Func __sPrintVar($vVar, $sSep = ", ", $sName = "", $bEOL = False)
 			EndIf
 			$s &= $sKey & "=" & __sPrintVar($sVal)
 		Next
+		If $bQueue Then
+			Local $i = Int($vVar.Item('head')), $n = Int($vVar.Item('tail'))
+			If $i >= $n Then
+				For $i = $i To $n
+					If $bF Then
+						$bF = False
+					Else
+						$s &= $sSep
+					EndIf
+					$s &= __sPrintVar($vVar.Item(String($i)))
+				Next
+			EndIf
+		EndIf
 		$s &= " )"
 
 	ElseIf IsMap($vVar) Then                ; map

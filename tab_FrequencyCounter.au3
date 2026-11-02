@@ -48,10 +48,10 @@ Global $g_fc_iReadTimer, $g_fc_iRefreshInterval = 100                       ; lo
 
 
 ; GUI elements
-Global $g_fc_hIpAddr, $g_fc_cScreenShot, $g_fc_cCaptureData, $g_hMainGui, $g_fc_hDevID, $g_fc_hScreen, $g_fc_cCaptureButton, _
+Global $g_fc_hIpAddr, $g_fc_cScreenShot, $g_hMainGui, $g_fc_hDevID, $g_fc_hScreen, $g_fc_cCaptureButton, _
 		$g_fc_cMean, $g_fc_cAllanDev, $g_fc_cCount, $g_fc_cFreq, $g_fc_cMax, $g_fc_cMin, $g_fc_cStdDev, $g_fc_cCount, _
 		$g_fc_cRefreshInterval, $g_fc_cCountSpeed, $g_fc_cCountSpeedLbl, $g_fc_cCaptureCount, $g_fc_cCaptureInitCheck, _
-		$g_fc_cPPM, $g_fc_iScreen = -1
+		$g_fc_cPPM, $g_fc_iScreen = -1           ;, $g_fc_cCaptureData
 
 Global $g_fc_bCommValid = False                                                                             ; IP address and/or communications are valid
 Global $g_fc_iRunTimer, $g_fc_fCountSpeed, $g_fc_mode, $g_fc_iTimer, $g_hTabFC, $g_fc_iTabIdx, _
@@ -244,28 +244,30 @@ Func fcTab_GuiCreate($iTabIdx, $oCanvas, $hCanvas)
 	GUICtrlSetOnEvent(-1, "fcTab_ScreenShotBrowse")
 	GUICtrlSetTip(-1, "Browse for where to save the screen shot")
 
-	$g_fc_cScreenShotBtn = GUICtrlCreateButton($ICON_SAVE, $w2 + 115, $y - 3, 25, 25)
-	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	GUICtrlSetFont(-1, 16)
-	GUICtrlSetOnEvent(-1, "fcTab_OnScreenShotBtn")
-	GUICtrlSetTip(-1, "Save the screen shot that is shown here at the right")
-	$y = $y + 25
-
-	GUICtrlCreateLabel("Data:", 10, $y + 3, 50, 17, BitOR($GUI_SS_DEFAULT_LABEL, $SS_RIGHT))
-	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	$g_fc_cCaptureData = GUICtrlCreateInput("...", 60, $y, $w2 + 30, 20, BitOR($GUI_SS_DEFAULT_INPUT, $GUI_SS_DEFAULT_INPUT))
-	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	GUICtrlCreateButton("...", $w2 + 90, $y - 3, 25, 25)
-	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	GUICtrlSetOnEvent(-1, "fcTab_CaptureDataBrowse")
-	GUICtrlSetTip(-1, "Browse for where to save the measurement data")
-
 	GUICtrlCreateButton($ICON_SAVE, $w2 + 115, $y - 3, 25, 25)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
 	GUICtrlSetFont(-1, 16)
-	GUICtrlSetOnEvent(-1, "fcTab_OnCaptureDataBtn")
-	GUICtrlSetTip(-1, "Save the measurement data shown here")
+	GUICtrlSetOnEvent(-1, "fcTab_OnScreenShotBtn")
+	GUICtrlSetTip(-1, "Save screenshot and measurement data")
+	;GUICtrlSetOnEvent(-1, "fcTab_OnScreenShotBtn")
+	;GUICtrlSetTip(-1, "Save the screen shot that is shown here at the right")
 	$y = $y + 25
+
+	;GUICtrlCreateLabel("Data:", 10, $y + 3, 50, 17, BitOR($GUI_SS_DEFAULT_LABEL, $SS_RIGHT))
+	;GUICtrlSetResizing(-1, $GUI_DOCKALL)
+	;$g_fc_cCaptureData = GUICtrlCreateInput("...", 60, $y, $w2 + 30, 20, BitOR($GUI_SS_DEFAULT_INPUT, $GUI_SS_DEFAULT_INPUT))
+	;GUICtrlSetResizing(-1, $GUI_DOCKALL)
+	;GUICtrlCreateButton("...", $w2 + 90, $y - 3, 25, 25)
+	;GUICtrlSetResizing(-1, $GUI_DOCKALL)
+	;GUICtrlSetOnEvent(-1, "fcTab_CaptureDataBrowse")
+	;GUICtrlSetTip(-1, "Browse for where to save the measurement data")
+
+	;GUICtrlCreateButton($ICON_SAVE, $w2 + 115, $y - 3, 25, 25)
+	;GUICtrlSetResizing(-1, $GUI_DOCKALL)
+	;GUICtrlSetFont(-1, 16)
+	;GUICtrlSetOnEvent(-1, "fcTab_OnCaptureDataBtn")
+	;GUICtrlSetTip(-1, "Save the measurement data shown here")
+	;$y = $y + 25
 
 	GUICtrlCreateLabel("Count >=", 10, $y + 3, 50, 17, BitOR($GUI_SS_DEFAULT_LABEL, $SS_RIGHT))
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
@@ -279,11 +281,11 @@ Func fcTab_GuiCreate($iTabIdx, $oCanvas, $hCanvas)
 	$g_fc_cCaptureInitCheck = GUICtrlCreateCheckbox("Initialize", $w1 + 138, $y, 70, 20)
 	GUICtrlSetState(-1, 0)
 	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	GUICtrlCreateButton($ICON_SAVE, $w2 + 115, $y - 3, 25, 25)
-	GUICtrlSetResizing(-1, $GUI_DOCKALL)
-	GUICtrlSetFont(-1, 16)
-	GUICtrlSetOnEvent(-1, "fcTab_OnCaptureAll")
-	GUICtrlSetTip(-1, "Save both measurement data and screenshot")
+	;GUICtrlCreateButton($ICON_SAVE, $w2 + 115, $y - 3, 25, 25)
+	;GUICtrlSetResizing(-1, $GUI_DOCKALL)
+	;GUICtrlSetFont(-1, 16)
+	;GUICtrlSetOnEvent(-1, "fcTab_OnCaptureAll")
+	;GUICtrlSetTip(-1, "Save both measurement data and screenshot")
 	$y = $y + 25
 
 	Local $issHeight = 272                          ; expected dimensions of screenshot
@@ -332,15 +334,15 @@ Func fcTab_OnResetStats()
 	;fcTab_PicRefresh()
 EndFunc   ;==>fcTab_OnResetStats
 
-Func fcTab_OnCaptureDataBtn()
-	If Not __IsFullPathSpecified(GUICtrlRead($g_fc_cCaptureData)) Then fcTab_CaptureDataBrowse()
-	__fc_SaveData()
-EndFunc   ;==>fcTab_OnCaptureDataBtn
+;Func fcTab_OnCaptureDataBtn()
+;	If Not __IsFullPathSpecified(GUICtrlRead($g_fc_cCaptureData)) Then fcTab_CaptureDataBrowse()
+;	__fc_SaveData()
+;EndFunc   ;==>fcTab_OnCaptureDataBtn
 
-Func fcTab_OnCaptureAll()
-	fcTab_OnCaptureDataBtn()
-	fcTab_OnScreenShotBtn()
-EndFunc   ;==>fcTab_OnCaptureAll
+;Func fcTab_OnCaptureAll()
+;	fcTab_OnCaptureDataBtn()
+;	fcTab_OnScreenShotBtn()
+;EndFunc   ;==>fcTab_OnCaptureAll
 
 Func fcTab_OnCaptureButton()
 	If $g_fc_mode = 1 Then          ; cancelling or exiting capture mode
@@ -428,70 +430,17 @@ Func fcTab_ScreenShotBrowse()
 EndFunc   ;==>fcTab_ScreenShotBrowse
 
 
-Func fcTab_CaptureDataBrowse()
-	Local $sDrive, $sDir, $sFileName, $sExtension
-	_PathSplit(GUICtrlRead($g_fc_cCaptureData), $sDrive, $sDir, $sFileName, $sExtension)
-	Local $sFolder = $sDrive & $sDir
-	If Not FileExists($sFolder) Then $sFolder = @ScriptDir
-	If StringLeft($sFileName, 1) = "." Then $sFileName = ""
-	If $sFileName = "" Then $sFileName = "FreqCount"
-	Local $sFile = FileSaveDialog("Frequency Statistics Save File", $sFolder, "(*.txt)", BitOR($FD_PATHMUSTEXIST, $FD_PATHMUSTEXIST), $sFileName, $g_hMainGui)
-	If Not ($sFile = "") And Not @error Then GUICtrlSetData($g_fc_cCaptureData, $sFile)
-EndFunc   ;==>fcTab_CaptureDataBrowse
+;Func fcTab_CaptureDataBrowse()
+;	Local $sDrive, $sDir, $sFileName, $sExtension
+;	_PathSplit(GUICtrlRead($g_fc_cCaptureData), $sDrive, $sDir, $sFileName, $sExtension)
+;	Local $sFolder = $sDrive & $sDir
+;	If Not FileExists($sFolder) Then $sFolder = @ScriptDir
+;	If StringLeft($sFileName, 1) = "." Then $sFileName = ""
+;	If $sFileName = "" Then $sFileName = "FreqCount"
+;	Local $sFile = FileSaveDialog("Frequency Statistics Save File", $sFolder, "(*.txt)", BitOR($FD_PATHMUSTEXIST, $FD_PATHMUSTEXIST), $sFileName, $g_hMainGui)
+;	If Not ($sFile = "") And Not @error Then GUICtrlSetData($g_fc_cCaptureData, $sFile)
+;EndFunc   ;==>fcTab_CaptureDataBrowse
 
-
-
-#cs
-;				read the statistics from the frequency counter, resetting the data collection
-Func fcTab_ReadStats($ipAddr = fcTab_GetIP())
-	Local Const $fAlpha = 0.8                                                                       ; for weighted average of samples per second calculation
-	Local $sF, $sStats, $sAllanDevVal, $i
-	Local $iTimeDiff = TimerDiff($g_fc_iTimer)
-	If $g_fc_oDev = '' Then $g_fc_oDev = fcTab_GetIP()
-
-	__viCmd($g_fc_oDev, $FC_VI_ABORT)                                                               ; stop the current calculations so we can grab the data
-	Sleep(100)
-
-	Local $iCountVal = __viReqBl($g_fc_oDev, $FC_VI_CALC_COUNT, 1000)                               ; get the number of measurement samples
-	If @error Or $iCountVal < 2 Then Return
-
-	$sF = __viReqBl($g_fc_oDev, $FC_VI_READ1, 1500)                                                 ; get the most recent frequency measurement
-	If @error Then $sF = ""
-	$i = StringInStr($sF, " ")
-	If $i Then $sF = StringLeft($sF, $i - 1)
-	$sStats = __viReqBl($g_fc_oDev, $FC_VI_CALC_ALL, 1500)                                          ; get the statistical calculations
-	If @error Then $sStats = ""
-	$sAllanDevVal = __viReqBl($g_fc_oDev, $FC_VI_CALC_ADEV, 1000)                                   ; get the Allan Deviation
-	If @error Then $sAllanDevVal = ""
-	__viCmdBl($g_fc_oDev, $FC_VI_INIT)                                                              ; have the counter start taking new measurements
-	$g_fc_iTimer = TimerInit()
-
-	Local $fCurrentSpeed = 1000 * $iCountVal / $iTimeDiff                                           ; current count speed in samples per second
-	If $g_fc_fCountSpeed = 0 Then                                                                   ; calculate a weighted average sample speed
-		$g_fc_fCountSpeed = $fCurrentSpeed
-	Else
-		$g_fc_fCountSpeed = $fCurrentSpeed * $fAlpha + $g_fc_fCountSpeed * (1 - $fAlpha)
-	EndIf
-
-
-	If $sF <> "" Then _
-			GUICtrlSetData($g_fc_cFreq, Number(StringMid($sF, StringInStr($sF, "+")), $NUMBER_DOUBLE))
-	If $sStats <> "" Then
-		Local $aTokens = StringSplit($sStats, ",")
-		If $aTokens[0] >= 4 Then
-			GUICtrlSetData($g_fc_cMean, Number($aTokens[1], $NUMBER_DOUBLE))
-			GUICtrlSetData($g_fc_cStdDev, Number($aTokens[2], $NUMBER_DOUBLE))
-			GUICtrlSetData($g_fc_cMin, Number($aTokens[3], $NUMBER_DOUBLE))
-			GUICtrlSetData($g_fc_cMax, Number($aTokens[4], $NUMBER_DOUBLE))
-		EndIf
-	EndIf
-	If $sAllanDevVal <> "" Then _
-			GUICtrlSetData($g_fc_cAllanDev, Number($sAllanDevVal, $NUMBER_DOUBLE))                  ; Displays live moving Allan Dev
-	GUICtrlSetData($g_fc_cCount, Number($iCountVal))                                                ; Displays live moving sample count
-	GUICtrlSetData($g_fc_cCountSpeed, StringFormat("%.1f", Number($g_fc_fCountSpeed)))              ; Display calculated samples per second data collection
-
-EndFunc   ;==>fcTab_ReadStats
-#ce
 
 
 
@@ -730,40 +679,51 @@ EndFunc   ;==>__fc_ScreenShot
 
 Func fcTab_OnScreenShotBtn()
 	If Not __IsFullPathSpecified(GUICtrlRead($g_fc_cScreenShot)) Then fcTab_ScreenShotBrowse()
-	Local $bData = 0                                                                        ; grab the picture data from the last download
-	Local $oCanvas = $g_aCanvas[$g_fc_iTabIdx]                                              ;
-	If $g_fc_iScreen < 0 Then $g_fc_iScreen = __Canvas_ZoomFind($oCanvas, $g_fc_hScreen)
-	If $g_fc_iScreen >= 0 Then
-		Local $aCtrl = $oCanvas.Item('aCtrls')
-		$bData = $aCtrl[$g_fc_iScreen][5]
-	EndIf
-	If IsBinary($bData) Then                                                                ; if picture found then save it to file
-		Local $sFile = GUICtrlRead($g_fc_cScreenShot)
-		GUICtrlSetData($g_fc_cScreenShot, __FileNameAutoIncrement($sFile))
 
-		Local $hFile = FileOpen($sFile, BitOR($FO_BINARY, $FO_OVERWRITE))
+	Local $sFile = GUICtrlRead($g_fc_cScreenShot)                                                           ; grab file path/name from gui
+	Local $s, $sFreqName = StringTrimRight(__NumEgr(GUICtrlRead($g_fc_cMean)), 2)
+	$sFile = StringReplace($sFile, "{freq}", $sFreqName)                                                    ; replace {freq} with the average frequency reading
+
+	Local $hFile = 0
+	Local $bData = __Canvas_GetCtrlPic($g_aCanvas[$g_fc_iTabIdx], $g_fc_iScreen, $g_fc_hScreen)             ; grab the picture data from the last download
+	If IsBinary($bData) Then                                                                                ; if picture found then save it to file
+		$s = __FileNameAutoIncrement($sFile)
+		;$s = StringReplace($s, $sFreqName, "{freq}")
+		GUICtrlSetData($g_fc_cScreenShot, $s)
+		$hFile = FileOpen($sFile, BitOR($FO_BINARY, $FO_OVERWRITE))
 		If $hFile > 0 Then
 			FileWrite($hFile, $bData)
 			FileClose($hFile)
-			MsgBox($MB_ICONINFORMATION, "Frequency Counter", "Screenshot successfully saved to: " & @CRLF & @CRLF & $sFile, 5)
-		Else
-			MsgBox($MB_ICONERROR, "Frequency Counter", "Unable to save screen to file.  Error " & @error & @CRLF & @CRLF & $sFile)
 		EndIf
 	Else
-		fcTab_PicRefresh()                                                                  ; if no picture found then request one from the visa device
+		fcTab_PicRefresh()                                                                                  ; if no picture found then request one from the visa device
 	EndIf
+
+	$s = __fc_SaveData(0, $sFile)                                                                           ; save measurement data to same file name but with txt extension
+	Local $iErr = @error
+
+	MsgBox(($hFile <= 0 Or $iErr) ? $MB_ICONERROR : $MB_ICONINFORMATION, "Frequency Counter", _
+			"Screen shot and measurements" & @CRLF & @CRLF _
+			& (($hFile > 0) ? "Successfully saved" : "ERROR saving") & " to " & @CRLF & $sFile & @CRLF & @CRLF _
+			& (($iErr = 0) ? "Successfully saved" : "ERROR saving") & " to " & @CRLF & $s & @CRLF & @CRLF _
+			, ($hFile <= 0 Or $iErr) ? 0 : 5, $g_hMainGui)
 
 	;__fc_ScreenShot()
 EndFunc   ;==>fcTab_OnScreenShotBtn
 
 
 
-Func __fc_SaveData($UX = 1, $sFile = GUICtrlRead($g_fc_cCaptureData))
+Func __fc_SaveData($UX = 1, $sFile = GUICtrlRead($g_fc_cScreenShot))
+	Local $sDrive, $sDir, $sName, $sExt                                                                     ; take file name and change extension to ".txt"
+	_PathSplit($sFile, $sDrive, $sDir, $sName, $sExt)
+	$sFile = _PathMake($sDrive, $sDir, $sName, ".txt")
+	$sFile = StringReplace($sFile, "{freq}", StringTrimRight(__NumEgr(GUICtrlRead($g_fc_cMean)), 2))        ; replace {freq} with the average frequency reading
+
 	Local Const $sTitle = "Frequency Counter Data File"
 	Local $hFile = FileOpen($sFile, 1)         ; 1=append
 	If $hFile < 0 Then
 		If $UX Then MsgBox($MB_ICONERROR, $sTitle, "Error opening data log file.   Error=" & @error & @CRLF & @CRLF & $sFile)
-		Return SetError($hFile, 0, -1)
+		Return SetError($hFile, 0, $sFile)
 	EndIf
 	FileWriteLine($hFile, "")
 	Local $fMean = GUICtrlRead($g_fc_cMean), $fAdev = GUICtrlRead($g_fc_cAllanDev)
@@ -788,7 +748,7 @@ Func __fc_SaveData($UX = 1, $sFile = GUICtrlRead($g_fc_cCaptureData))
 
 	FileClose($hFile)
 	If $UX Then MsgBox($MB_ICONINFORMATION, $sTitle, "Current readings/statistics saved to" & @CRLF & @CRLF & $sFile, 5)
-	Return 1
+	Return $sFile
 EndFunc   ;==>__fc_SaveData
 
 
@@ -816,7 +776,7 @@ Func fcTab_ConfigWrite()
 	IniWrite($g_configFile, $fcTab_ConfigSection, "CountRequired", GUICtrlRead($g_fc_cCaptureCount))                                    ; autocapture sample minimum count
 	IniWrite($g_configFile, $fcTab_ConfigSection, "RefreshInterval", GUICtrlRead($g_fc_cRefreshInterval))                               ; refresh interval
 	IniWrite($g_configFile, $fcTab_ConfigSection, "ScreenShotFile", GUICtrlRead($g_fc_cScreenShot))                                     ; screen shot file
-	IniWrite($g_configFile, $fcTab_ConfigSection, "CaptureDataFile", GUICtrlRead($g_fc_cCaptureData))                                   ; data shot file
+	;IniWrite($g_configFile, $fcTab_ConfigSection, "CaptureDataFile", GUICtrlRead($g_fc_cCaptureData))                                   ; data shot file
 	__IniWriteGuiCheckbox($g_fc_cCaptureInitCheck, "CaptureInitialize", $fcTab_ConfigSection)                                           ; init checkbox
 EndFunc   ;==>fcTab_ConfigWrite
 
@@ -829,7 +789,7 @@ Func fcTab_ConfigRead()
 	GUICtrlSetData($g_fc_cCaptureCount, IniRead($g_configFile, $fcTab_ConfigSection, "CountRequired", GUICtrlRead($g_fc_cCaptureCount)))            ; autocapture sample minimum count
 	GUICtrlSetData($g_fc_cRefreshInterval, IniRead($g_configFile, $fcTab_ConfigSection, "RefreshInterval", GUICtrlRead($g_fc_cRefreshInterval)))    ; refresh interval
 	GUICtrlSetData($g_fc_cScreenShot, IniRead($g_configFile, $fcTab_ConfigSection, "ScreenShotFile", GUICtrlRead($g_fc_cScreenShot)))               ; screen shot file
-	GUICtrlSetData($g_fc_cCaptureData, IniRead($g_configFile, $fcTab_ConfigSection, "CaptureDataFile", GUICtrlRead($g_fc_cCaptureData)))            ; data shot file
+	;GUICtrlSetData($g_fc_cCaptureData, IniRead($g_configFile, $fcTab_ConfigSection, "CaptureDataFile", GUICtrlRead($g_fc_cCaptureData)))            ; data shot file
 	__IniReadGuiCheckbox($g_fc_cCaptureInitCheck, "CaptureInitialize", $fcTab_ConfigSection)                                                        ; init checkbox
 
 	fcTab_OnIpAddrOrRefresh()

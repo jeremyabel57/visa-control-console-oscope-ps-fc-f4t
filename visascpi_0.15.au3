@@ -346,7 +346,7 @@ EndFunc   ;==>__viScanSetProgress
 
 
 
-Global $g_tc_hIpAddr, $g_dc_hIpAddr, $g_fc_hIpAddr, $g_sc_hIpAddr, $g_dbg_hIpAddr        ; all the ip address selection combo boxes
+Global $g_tc_hIpAddr, $g_dc_hIpAddr, $g_fc_hIpAddr, $g_sc_hIpAddr, $g_dg_hIpAddr        ; all the ip address selection combo boxes
 
 
 
@@ -397,7 +397,7 @@ Func __viScanDistribute()
 	If $g_dc_hIpAddr <> '' Then __viScanPopulateComboBox($g_dc_hIpAddr, "dc")
 	If $g_fc_hIpAddr <> '' Then __viScanPopulateComboBox($g_fc_hIpAddr, "fc")
 	If $g_sc_hIpAddr <> '' Then __viScanPopulateComboBox($g_sc_hIpAddr, "sc")
-	If $g_dbg_hIpAddr <> '' Then __viScanPopulateComboBox($g_dbg_hIpAddr, "", True)
+	If $g_dg_hIpAddr <> '' Then __viScanPopulateComboBox($g_dg_hIpAddr, "", True)
 	;If $__viSD_hIpAddr <> '' And $__viSD_hIpAddr <> 0 Then __viScanPopulateComboBox($__viSD_hIpAddr, "")
 EndFunc   ;==>__viScanDistribute
 
@@ -1065,9 +1065,9 @@ Func __viGuiPicLoop(ByRef $bDownloadingFlag, ByRef $bPicData, $iTabIdx, ByRef $i
 			;__ConsolePrintVar("__viGuiPicLoop", "bDownloading", $bDownloadingFlag, "bPicData", $bPicData, "oCanvas", $oCanvas)
 			;__ConsolePrintVar("__viGuiPicLoop", "iScreen", $iScreen, "hScreen", $hScreen)
 			If $iScreen >= 0 Then
-				Local $aCtrl = $oCanvas.Item('aCtrls')
+				Local $aCtrl = $oCanvas.Item('aCanvasCtrls')
 				$aCtrl[$iScreen][5] = $bPicData
-				$oCanvas.Item('aCtrls') = $aCtrl
+				$oCanvas.Item('aCanvasCtrls') = $aCtrl
 				If GUICtrlRead($g_cTab) = $iTabIdx Then __Canvas_AdjZoom($oCanvas)      ; adjust the picture to the current zoom scale and put it in the gui
 				$bPicData = 0
 			EndIf

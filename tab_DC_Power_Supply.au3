@@ -615,13 +615,7 @@ Func dcTab_SaveScreenShot()
 	$sFile = FileSaveDialog("Save Screen Shot", $sDrive & $sDir, "(*.gif)", BitOR($FD_PATHMUSTEXIST, $FD_PATHMUSTEXIST), $sName & $sExt, $g_hMainGui)
 	If $sFile = "" Then Return
 
-	Local $bData = 0                                                                        ; grab the picture data from the last download
-	Local $oCanvas = $g_aCanvas[$g_dc_iTabIdx]                                            ;
-	If $g_dc_iScreen < 0 Then $g_dc_iScreen = __Canvas_ZoomFind($oCanvas, $g_dc_hScreen)
-	If $g_dc_iScreen >= 0 Then
-		Local $aCtrl = $oCanvas.Item('aCtrls')
-		$bData = $aCtrl[$g_dc_iScreen][5]
-	EndIf
+	Local $bData = __Canvas_GetCtrlPic($g_aCanvas[$g_dc_iTabIdx], $g_dc_iScreen, $g_dc_hScreen)
 	If IsBinary($bData) Then                                                                ; if picture found then save it to file
 		Local $hFile = FileOpen($sFile, BitOR($FO_BINARY, $FO_OVERWRITE))
 		If $hFile > 0 Then

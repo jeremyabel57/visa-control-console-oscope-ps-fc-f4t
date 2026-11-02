@@ -5,6 +5,7 @@
 #include "tab_DC_Power_Supply.au3"
 
 
+#include <MsgBoxConstants.au3>
 #include <AutoItConstants.au3>
 #include <GUIConstantsEx.au3>
 #include <StaticConstants.au3>
@@ -24,12 +25,16 @@ Global $g_cb_iReadTimer, $g_cb_iRefreshInterval = 250           ;
 Global $g_cb_hMon                                               ; checkbox to enable or disable monitoring of the devices
 Global $g_cb_iEtaTimer = '', $g_cb_fEtaPrevTemp, _              ; calculating eta to reach target temperature
 		$g_cb_fEtaPrevVelocity
+Global $g_cb_togglePeriod = 2000                                ; time between toggles when cycling the power
+Global $g_cb_Tovershoot = 5                                     ; minimum number of degrees delta to get the chamber to turn power up to at least 50% or so
+Global $g_cb_ToverPeriod = 15000                                ; length of time after requesting to overshoot our temperature target before we request the real target
 
 Global $g_oMainCanvas
 
 
 
 Func CreateControlBar($iX, $iY, $iW, $iH)
+	Local $i, $cMenu
 
 	Local $iWbtn = 25                                                                                                       ; on/off button width
 	Local $iWbtn2 = 40                                                                                                      ; up/down button width
@@ -55,6 +60,15 @@ Func CreateControlBar($iX, $iY, $iW, $iH)
 	$g_cb_hTset = GUICtrlCreateButton("--- C", $x, $iY, $iWt, $iH, $BS_RIGHT)                                               ; chamber setpoint
 	GUICtrlSetOnEvent(-1, "__cbSetTC")
 	$x += $iWt + $iWs1
+	$cMenu = GUICtrlCreateContextMenu($g_cb_hTset)                                                                          ; context menu (right click) menu
+	GUICtrlCreateMenuItem("70 C", $cMenu)
+	GUICtrlSetOnEvent(-1, "__cbTCset70")
+	GUICtrlCreateMenuItem("25 C", $cMenu)
+	GUICtrlSetOnEvent(-1, "__cbTCset25")
+	GUICtrlCreateMenuItem("-5 C", $cMenu)
+	GUICtrlSetOnEvent(-1, "__cbTCsetN5")
+	GUICtrlCreateMenuItem("-40 C", $cMenu)
+	GUICtrlSetOnEvent(-1, "__cbTCsetN40")
 
 	$lbl3 = GUICtrlCreateLabel("ETA", $x, $iY + 3, 28, 17, BitOR($GUI_SS_DEFAULT_LABEL, $SS_RIGHT))
 	$x += 28
@@ -72,18 +86,22 @@ Func CreateControlBar($iX, $iY, $iW, $iH)
 	$g_cb_hDdn = GUICtrlCreateButton("Down", $x, $iY, $iWbtn2, $iH)                                                         ; dc supply down sequence
 	GUICtrlSetOnEvent(-1, "dcTab_pwrdnClick")
 	$x += $iWbtn2 + $iWs1
-	$g_cb_hD[0] = GUICtrlCreateButton("Off", $x, $iY, $iWbtn3, $iH)                                                         ; dc channel 1 on/off
-	GUICtrlSetOnEvent(-1, "__cbDCd")
-	$x += $iWbtn3 + $iWs1
-	$g_cb_hD[1] = GUICtrlCreateButton("Off", $x, $iY, $iWbtn3, $iH)                                                         ; dc channel 2 on/off
-	GUICtrlSetOnEvent(-1, "__cbDCd")
-	$x += $iWbtn3 + $iWs1
-	$g_cb_hD[2] = GUICtrlCreateButton("Off", $x, $iY, $iWbtn3, $iH)                                                         ; dc channel 3 on/off
-	GUICtrlSetOnEvent(-1, "__cbDCd")
-	$x += $iWbtn3 + $iWs1
-	$g_cb_hD[3] = GUICtrlCreateButton("Off", $x, $iY, $iWbtn3, $iH)                                                         ; dc channel 4 on/off
-	GUICtrlSetOnEvent(-1, "__cbDCd")
-	$x += $iWbtn3 + $iWs2
+
+	For $i = 0 To 3
+		$g_cb_hD[$i] = GUICtrlCreateButton("Off", $x, $iY, $iWbtn3, $iH)                                                    ; dc channel 1 on/off
+		GUICtrlSetOnEvent(-1, "__cbDCtoggle")
+		$x += $iWbtn3 + $iWs1
+		$cMenu = GUICtrlCreateContextMenu($g_cb_hD[$i])                                                                     ; context menu (right click) menu for each power button
+		GUICtrlCreateMenuItem("Cycle", $cMenu)
+		GUICtrlSetOnEvent(-1, "__cbDCcycle")
+		GUICtrlCreateMenuItem("On", $cMenu)
+		GUICtrlSetOnEvent(-1, "__cbDCon")
+		GUICtrlCreateMenuItem("Off", $cMenu)
+		GUICtrlSetOnEvent(-1, "__cbDCoff")
+	Next
+	$x += $iWs2
+
+
 
 	; all on/off button
 	$g_cb_hEn = GUICtrlCreateButton("Off", $x, $iY, $iWbtn, $iH)                                                            ; chamber and all DC power rails on/off button.  off: dc down followed by all ch off, and chamber off.  on: dc up, chamber on
@@ -93,7 +111,7 @@ Func CreateControlBar($iX, $iY, $iW, $iH)
 	; add controls to aCtrls so they get scaled with ctrl+mousewheel
 	Local $a[] = [$g_cb_hMon, $lbl1, $g_cb_hTemp, $lbl2, $g_cb_hTset, $lbl3, $g_cb_hTeta, $g_cb_hTen, $g_cb_hDup, $g_cb_hDdn, $g_cb_hD[0], $g_cb_hD[1], $g_cb_hD[2], $g_cb_hD[3], $g_cb_hEn]
 	Local $aCtrls[0]
-	If $g_oMainCanvas.Exists('aCtrls') Then $aCtrls = $g_oMainCanvas.Item('aCtrls')
+	If $g_oMainCanvas.Exists('aCBCtrls') Then $aCtrls = $g_oMainCanvas.Item('aCBCtrls')
 	Local $i, $n = UBound($a) - 1, $m = UBound($aCtrls)
 	ReDim $aCtrls[$m + $n + 1]
 	Local $mydock = BitOR($GUI_DOCKLEFT, $GUI_DOCKBOTTOM, $GUI_DOCKSIZE)
@@ -101,7 +119,7 @@ Func CreateControlBar($iX, $iY, $iW, $iH)
 		GUICtrlSetResizing($a[$i], $mydock)
 		$aCtrls[$m + $i] = $a[$i]
 	Next
-	$g_oMainCanvas.Item('aCtrls') = $aCtrls
+	$g_oMainCanvas.Item('aSBCtrls') = $aCtrls
 
 EndFunc   ;==>CreateControlBar
 
@@ -116,21 +134,52 @@ Func ControlBar_Init()
 EndFunc   ;==>ControlBar_Init
 
 
+
+
+
 ;
 
-
-
-; next: work on debug tab.  key to main visa queue only.
-; for each device, pull their queue from the global variables directly (g_dc_oDev, g_fc_oDev...).  update each one to use global variable for the oDev object.
-; make a function that returns the oDev pointer for a given item "tc/fc/dc/sc" and makes sure it is connected or at least attempted to connect.  if not connecting then
-; possibly look at the aDevs array for its IP and try again.
-
-; next: on startup see if you can skip many of the getID routines.  __viGetID - also do a ping to see if the IP address is offline before spending timeout with visa IDN command
-;
 
 
 ; gui event handlers
 ;
+
+
+
+Func __cbTCset70()
+	__cbTCset(70)
+EndFunc   ;==>__cbTCset70
+Func __cbTCset25()
+	__cbTCset(25)
+EndFunc   ;==>__cbTCset25
+Func __cbTCsetN5()
+	__cbTCset(-5)
+EndFunc   ;==>__cbTCsetN5
+Func __cbTCsetN40()
+	__cbTCset(-40)
+EndFunc   ;==>__cbTCsetN40
+
+Func __cbTCset($fSP)
+	Local $fTemp = Number(StringTrimRight(GUICtrlRead($g_cb_hTemp), 2))
+	If Abs($fSP - $fTemp) < 3 Then                                      ; if we are within 3 degrees then we need to first overshoot our request so the chamber works towards more than a 3 degree delta, next after a minute or so we set the real temperature
+		__F4Tsetpoint($g_tc_oDev, $fTemp + ($fSP > $fTemp ? 1 : -1) * $g_cb_Tovershoot)
+		__viCmd($g_tc_oDev, "sleep " & $g_cb_ToverPeriod)
+	EndIf
+	__F4Tsetpoint($g_tc_oDev, $fSP)
+	__cbTetaReset()
+EndFunc   ;==>__cbTCset
+
+
+Func __cbSetTC()        ; user clicked button - set thermal chamber temperature setpoint
+	Local $fSP = Round(Number(GUICtrlRead($g_cb_hTset)), 1)
+	$fSP = StringStripWS(InputBox("Chamber Temperature", "SetPoint", $fSP, "", 200, 120), 3)
+	If StringInStr(StringLower(StringRight($fSP, 1)), "cf") Then $fSP = StringStripWS(StringTrimRight($fSP, 1), 3)
+	If ($fSP = "") Or (Not StringIsFloat($fSP) And Not StringIsInt($fSP)) Then Return
+	$fSP = Round(Number($fSP), 1)
+	;__ConsolePrintVars("__cbSetTC, ", "fSP", $fSP)
+	__cbTCset($fSP)
+EndFunc   ;==>__cbSetTC
+
 
 
 Func __cbTCen()
@@ -138,7 +187,32 @@ Func __cbTCen()
 EndFunc   ;==>__cbTCen
 
 
-Func __cbDCd()
+
+Func __cbDCcycle()                                                  ; toggle twice
+	Local $j = __cbDCh()
+	Local $bState = dcTab_GuiGetOnState($j, @GUI_CtrlId)            ; grab state from gui button
+	__dcps_SetStateBg($g_dc_oDev, $j, Not $bState)                  ; send visa command to set new output state
+	__viCmd($g_dc_oDev, "sleep " & $g_cb_togglePeriod)              ; delay period inbetween toggles
+	__dcps_SetStateBg($g_dc_oDev, $j, $bState)                      ; send visa command to set new output state
+	dcTab_GuiSetOnState($j, Not $bState, True, @GUI_CtrlId, False)  ; update gui button
+EndFunc   ;==>__cbDCcycle
+Func __cbDCtoggle()                                                 ; Toggle once
+	Local $j = __cbDCh()
+	__cbDCset($j, Not dcTab_GuiGetOnState($j, @GUI_CtrlId))         ; get current state, invert it, send it to __cbDCset
+EndFunc   ;==>__cbDCtoggle
+Func __cbDCon()                                                     ; Turn on
+	__cbDCset(__cbDCh(), True)                                      ;
+EndFunc   ;==>__cbDCon
+Func __cbDCoff()                                                    ; Turn off
+	__cbDCset(__cbDCh(), False)                                     ;
+EndFunc   ;==>__cbDCoff
+
+Func __cbDCset($j, $bState)                                         ; send visa command and set button state
+	__dcps_SetStateBg($g_dc_oDev, $j, $bState)                      ; send visa command to set new output state
+	dcTab_GuiSetOnState($j, $bState, True, @GUI_CtrlId, False)      ; update gui button
+EndFunc   ;==>__cbDCset
+
+Func __cbDCh()                                                      ; get button index from @GUI_CtrlId
 	Local $j
 	Switch @GUI_CtrlId
 		Case $g_cb_hD[0]
@@ -150,11 +224,10 @@ Func __cbDCd()
 		Case $g_cb_hD[3]
 			$j = 4
 	EndSwitch
-	Local $bState = dcTab_GuiGetOnState($j, @GUI_CtrlId)            ; grab state from gui button
-	$bState = Not $bState                                           ; toggle state
-	__dcps_SetStateBg($g_dc_oDev, $j, $bState)                      ; send visa command to set new output state
-	dcTab_GuiSetOnState($j, $bState, True, @GUI_CtrlId, False)      ; update gui button
-EndFunc   ;==>__cbDCd
+	Return $j
+EndFunc   ;==>__cbDCh
+
+
 
 
 Func __cbEn()
@@ -185,6 +258,7 @@ Func __cbLoop()
 	$g_cb_iReadTimer = TimerInit()                                                                                          ; Reset background clock
 	If Not __GuiCheckbox($g_cb_hMon) Then Return
 
+	Local $i, $bFlag
 
 	If $g_cb_fTset <> '' Then
 		GUICtrlSetData($g_cb_hTset, StringFormat("%.1f C", __F4TtoC($g_tc_oDev, __F4TreadBgProcReply($g_tc_oDev, $g_iF4Tsetpoint, $g_cb_fTset))))
@@ -202,7 +276,7 @@ Func __cbLoop()
 	EndIf
 
 	If $g_cb_sD <> '' Then
-		Local $i, $aRead = StringSplit($g_cb_sD, ",")
+		Local $aRead = StringSplit($g_cb_sD, ",")
 		If $aRead[0] >= 4 Then
 			For $i = 1 To 4
 				dcTab_GuiSetOnState($i, Int($aRead[$i]) <> 0, False, $g_cb_hD, False)
@@ -210,6 +284,12 @@ Func __cbLoop()
 		EndIf
 		$g_cb_sD = ''
 	EndIf
+
+	$bFlag = __GuiToggleButtonGetOnState($g_cb_hTen)        ; check on state of main on/off button
+	For $i = 0 To 3
+		$bFlag = $bFlag Or __GuiToggleButtonGetOnState($g_cb_hD[$i])
+	Next
+	__GuiToggleButtonSetOnState($g_cb_hEn, $bFlag, True, 0xFFFF00, $COLOR_BLACK, 0xFDFDFD, $COLOR_BLACK, True)
 
 
 	If __viIsInstrument($g_tc_oDev) And __viIsIdle($g_tc_oDev) Then                                                         ; if TC comm idle then send requests for data
@@ -226,53 +306,9 @@ EndFunc   ;==>__cbLoop
 
 
 
-; --------------------------------------
-; config file
-
-Global $cb_ConfigSection = "cb"
-Global $g_configFile
-
-Func cb_ConfigWrite()
-	__IniWriteGuiCheckbox($g_cb_hMon, "monitor", $cb_ConfigSection)
-EndFunc   ;==>cb_ConfigWrite
-
-Func cb_ConfigRead()
-	If $g_configFile = "" Then Return
-	If Not FileExists($g_configFile) Then Return
-	__IniReadGuiCheckbox($g_cb_hMon, "monitor", $cb_ConfigSection)
-EndFunc   ;==>cb_ConfigRead
-
-
-
 
 ; --------------------------------------
-; gui functions
-
-
-#cs
-Func __cb_WM_COMMAND($hWnd, $iMsg, $wParam, $lParam)                        ; hook for when temperature setpoint field gets focus (clicked on)
-	If $hWnd <> $g_hMainGui Then Return
-	Local $nNotifyCode = BitShift($wParam, 16)                              ; Get the notification code
-	Local $nID = BitAND($wParam, 0xFFFF)                                    ; Get the Control ID
-	If $nID = $g_cb_hTset And $nNotifyCode = $EN_SETFOCUS Then __cbSetTC()  ; if the Tset/SP field gets focus (user clicked on it) then ask what temperature they want
-	Return $GUI_RUNDEFMSG                                                   ; Pass control back to AutoIt's internal systems
-EndFunc   ;==>__cb_WM_COMMAND
-#ce
-
-
-
-Func __cbSetTC()        ; set thermal chamber temperature setpoint
-	Local $fSP = Round(Number(GUICtrlRead($g_cb_hTset)), 1)
-	$fSP = StringStripWS(InputBox("Chamber Temperature", "SetPoint", $fSP, "", 200, 120), 3)
-	If StringInStr(StringLower(StringRight($fSP, 1)), "cf") Then $fSP = StringStripWS(StringTrimRight($fSP, 1), 3)
-	If ($fSP = "") Or (Not StringIsFloat($fSP) And Not StringIsInt($fSP)) Then Return
-	$fSP = Round(Number($fSP), 1)
-	;__ConsolePrintVars("__cbSetTC, ", "fSP", $fSP)
-	__F4Tsetpoint($fSP)
-	__cbTetaReset()
-EndFunc   ;==>__cbSetTC
-
-
+; ETA functions
 
 Func __cbTetaReset()    ; reset/restart eta calculus
 	$g_cb_fEtaTimer = ''
@@ -317,3 +353,28 @@ Func __cbTeta($fTemp)   ; estimate ETA to reach chamber temperature
 EndFunc   ;==>__cbTeta
 
 
+
+
+; --------------------------------------
+; config file
+
+Global $cb_ConfigSection = "cb"
+Global $g_configFile
+
+Func cb_ConfigWrite()
+	__IniWriteGuiCheckbox($g_cb_hMon, "monitor", $cb_ConfigSection)
+EndFunc   ;==>cb_ConfigWrite
+
+Func cb_ConfigRead()
+	If $g_configFile = "" Then Return
+	If Not FileExists($g_configFile) Then Return
+	__IniReadGuiCheckbox($g_cb_hMon, "monitor", $cb_ConfigSection)
+EndFunc   ;==>cb_ConfigRead
+
+
+
+; --------------------------------------
+; --------------------------------------
+; --------------------------------------
+; --------------------------------------
+; --------------------------------------

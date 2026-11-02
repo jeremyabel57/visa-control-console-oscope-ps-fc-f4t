@@ -1,114 +1,126 @@
 #cs
 
 
-debug __viGetIDbg
-  solved the issue with the excess traffic - that was a receive binary request when in raw socket mode.  this is now fixed
-  this routine still has issues, now everytime it is run it toggles the mode (vxi/raw) but does not appear to detect that the first mode was working
+	debug __viGetIDbg
+	  solved the issue with the excess traffic - that was a receive binary request when in raw socket mode.  this is now fixed
+	  this routine still has issues, now everytime it is run it toggles the mode (vxi/raw) but does not appear to detect that the first mode was working
 
 
-debug tab pushes stuff on stack, but the last item on the stack does not appear to drop.
-  add a debug button that dumps oDev into the output window any time you want
-  add to the sPrintVar routine to detect if it is a stack, queue, or pQueue and print them as just a list of items (without head and tail pointers)
+	debug tab pushes stuff on stack, but the last item on the stack does not appear to drop.
+	  / add a debug button that dumps oDev into the output window any time you want
+	  / add to the sPrintVar routine to detect if it is a stack, queue, or pQueue and print them as just a list of items (without head and tail pointers)
 
-when closing conditional script statement, there appears to be a pause - guessing a timeout as if it thinks there is a command running
-  for this, check the end of LoopExec to see what it does with a sCmd or sReq string that evaluates to a blank string.  If waitReply is true this might account for the pause
-
-
-add right click context menu to the control bar power buttons.  keep a setting of what to do on click.  options: toggle power, toggle twice with a 2 second delay inbetween (option to change the delay inbetween), continuous toggling with on time and off time numbers
-add right click option on chamber temperature settings with presets 70C, 25C, -5C, -40C
+	when closing conditional script statement, there appears to be a pause - guessing a timeout as if it thinks there is a command running
+	  for this, check the end of LoopExec to see what it does with a sCmd or sReq string that evaluates to a blank string.  If waitReply is true this might account for the pause
 
 
-
-
-add file browser tab for scope to transfer files to and from scope using visa,  ask ai to write it in autoit
-
-
-
-make each tab canvas able to pop out and become its own window
-- change from one view port to each tab having its own viewport
-- add a flag in the oCanvas to indicate if canvas is inside or outside the main window
-- adjust how WM_SIZE, WM_MOUSEWHEEL, WM_VSCROLL, WM_HSCROLL and other events affect the window
-  . hWnd will point to the outside window instead of hMainGui
-  . resize calculations will need to shift their margin to not include the tab enclosure
-- save all window positions in the ini file
-- key: click and drag tab selector tab outside of main window to pop out.
-- minimize window or drag and drop on main window to pop back in
-- if popped out then leave tab area shown in main window with a single button/message to click and pull it back in
-
-
-add master queue for a script that runs all instruments.  use simple id prefix for which instrument gets the visa command
-  dc - power supply
-  tc - thermal chamber
-  fc - frequency counter
-  sc - oscope
-  i.e.:  sc:visastring
-
-debug box needs debug - monitoring commands and results is not working
-	debug edit box to enter script/visa commands and a combo select box to select which item to send it to
-	another edit box to show the results, an execute button, save and load buttons for the edit field
-	have this debug box only use the main queue
-
-
-
-; todo
-;
-;
-;
-
-; next steps:
-; - see if you can have it allow the separate tabs to undock from the main window and become their own window
-; - add a dashboard tab that will have
-;   . chamber temperature and setpoint and on/off button
-;   . power supply voltages, on/off status (grayed out if off, colored if on), and up/down sequence buttons
-;   . oscope screen capture button that will have a minature of the picture shown in the dashboard after it is captured
-;
-
-
-  all scripting commands possible - and create simple documentation for the scripting
-
-
-once we get all of that done, then look into converting to python.  make sure the visa/modbus comm and script queue is solid in python before proceeding
-use pywin32 for generic windows gui elements
-chatgpt or gemini can help do conversions so some of the stuff works like autoit commands, so the code does not look so messy
-
-finally, add manual test station scripts for i2c, spi, and clocks
+	? change FC file select fields to be just one field, the save data option will just use the save picture path and change the extension to '.txt'.
+	  Also add an option to include '{freq}' somewhere in the file name or path.  This will be replaced by the center frequency $fMean.
+	  add a function that finds the nearest 3 decimal places for the number and trims it down to that, then keeps 2 decimal places, and also adds metric suffix for the order of magnitude
+	- implemented - needs debug
 
 
 
 
 
-next steps 10/12/2026
 
-handle minimize - it caused the visa scan to fail
+	? add file browser tab for scope to transfer files to and from scope using visa,  ask ai to write it in autoit
+	  now needs debug and initial tuning
+
+
+
+	make each tab canvas able to pop out and become its own window
+    - add extra ctrls list to oCanvan,
+	  . change aCtrls to aCanvasCtrls
+	  . make aTabCtrls for the controls outside of the canvas that belong to the tab
+	  . set zoom function will adjust one or the other depending on where the mouse is (inside the canvas or the main window tab area)
+	  . when you pop out the tab, create a new temporary window canvas to contain the viewport and a tab section on top with the tab controls
+	  . also adjust to zoom on the main window for the control bar at the bottom - scale the vertical offset of the control bar based on the zoom
+    -
+	- change from one view port to each tab having its own viewport
+	- add a flag in the oCanvas to indicate if canvas is inside or outside the main window
+	- adjust how WM_SIZE, WM_MOUSEWHEEL, WM_VSCROLL, WM_HSCROLL and other events affect the window
+	  . hWnd will point to the outside window instead of hMainGui
+	  . resize calculations will need to shift their margin to not include the tab enclosure
+	- save all window positions in the ini file
+	- key: click and drag tab selector tab outside of main window to pop out.
+	- minimize window or drag and drop on main window to pop back in
+	- if popped out then leave tab area shown in main window with a single button/message to click and pull it back in
+
+
+	add master queue for a script that runs all instruments.  use simple id prefix for which instrument gets the visa command
+	  dc - power supply
+	  tc - thermal chamber
+	  fc - frequency counter
+	  sc - oscope
+	  i.e.:  sc:visastring
+
+	debug box needs debug - monitoring commands and results is not working
+		debug edit box to enter script/visa commands and a combo select box to select which item to send it to
+		another edit box to show the results, an execute button, save and load buttons for the edit field
+		have this debug box only use the main queue
+
+
+
+	; todo
+	;
+	;
+	;
+
+	; next steps:
+	; - see if you can have it allow the separate tabs to undock from the main window and become their own window
+	; - add a dashboard tab that will have
+	;   . chamber temperature and setpoint and on/off button
+	;   . power supply voltages, on/off status (grayed out if off, colored if on), and up/down sequence buttons
+	;   . oscope screen capture button that will have a minature of the picture shown in the dashboard after it is captured
+	;
+
+
+	  all scripting commands possible - and create simple documentation for the scripting
+
+
+	once we get all of that done, then look into converting to python.  make sure the visa/modbus comm and script queue is solid in python before proceeding
+	use pywin32 for generic windows gui elements
+	chatgpt or gemini can help do conversions so some of the stuff works like autoit commands, so the code does not look so messy
+
+	finally, add manual test station scripts for i2c, spi, and clocks
+
+
+
+
+
+	next steps 10/12/2026
+
+	handle minimize - it caused the visa scan to fail
 
 	add settings/config tab where you can set variables - used for pn/sn/ipn/...
-	chamber temperature selections
-	signal/item list (clocks, I2c busses, spi busses, etc...)
-	folder of where to store data
+		chamber temperature selections
+		signal/item list (clocks, I2c busses, spi busses, etc...)
+		folder of where to store data
 
-automating the manual test sequence
+	automating the manual test sequence
 
-	option to save data direct to test plan in its existing format.  add profile config file to tell where to save which piece of data
+		option to save data direct to test plan in its existing format.  add profile config file to tell where to save which piece of data
 
-	add tab for each test I2C, SPI, Clocks
-	   add general picture file for the timing diagram for each test
+		add tab for each test I2C, SPI, Clocks
+		   add general picture file for the timing diagram for each test
 
-	during the test sequence, add option to show a picture before each measurement.
-	  the picture will be a file showing the timing diagram with the particular measurement highlighted and a text field superimposed with notes
-	  of what to measure
+		during the test sequence, add option to show a picture before each measurement.
+		  the picture will be a file showing the timing diagram with the particular measurement highlighted and a text field superimposed with notes
+		  of what to measure
 
-	for each measurement, or group of measurements, list them out in the gui, then have buttons for setup scope and capture scope
-	  make a generic framework for this so we can have a config file for each test profile.
-	  the file can list the measurements needed, and point to the visa scripts to setup the scope and capture from the scope
-	  also use common variables names to pull the chamber temperature and other info for the scopeshot titles and file names
-	  and have pointers to where to park the captured data in the excel spreadsheet
+		for each measurement, or group of measurements, list them out in the gui, then have buttons for setup scope and capture scope
+		  make a generic framework for this so we can have a config file for each test profile.
+		  the file can list the measurements needed, and point to the visa scripts to setup the scope and capture from the scope
+		  also use common variables names to pull the chamber temperature and other info for the scopeshot titles and file names
+		  and have pointers to where to park the captured data in the excel spreadsheet
 
 
-on the scope
-    for the automated captures, see if we can get the scope to show where it measured each item.  may have to take multiple scope shots
-	use the generic text files as script files to take each measurement
+	on the scope
+	    for the automated captures, see if we can get the scope to show where it measured each item.  may have to take multiple scope shots
+		use the generic text files as script files to take each measurement
 
-	add option
+		add option
 
 
 
@@ -171,31 +183,31 @@ OnAutoItExitRegister("MainExit")                ; register before any other exit
 
 
 #cs
-Local $oDev = "192.168.0.14"
-Local $sR = __viReqBl($oDev,"*OPC?",true)
-Local $sR = __viReqBl($oDev,"*IDN?",true,2000)
+	Local $oDev = "192.168.0.14"
+	Local $sR = __viReqBl($oDev,"*OPC?",true)
+	Local $sR = __viReqBl($oDev,"*IDN?",true,2000)
 
-Exit
+	Exit
 #ce
 
 #cs
-; debug begin
-#include "visascpi.au3"
+	; debug begin
+	#include "visascpi.au3"
 
 
-Local $oDev = "192.168.0.16"
-Local $sR = __viReqBl($oDev,"*IDN?",true)
+	Local $oDev = "192.168.0.16"
+	Local $sR = __viReqBl($oDev,"*IDN?",true)
 
-Exit
+	Exit
 
-Local $oDev = "raw:192.168.0.25"
-Local $sR = __viReqBl($oDev,"*IDN?",true)
+	Local $oDev = "raw:192.168.0.25"
+	Local $sR = __viReqBl($oDev,"*IDN?",true)
 
-$oDev = "192.168.0.14"
-Local $sR = __viReqBl($oDev,"*IDN?",true)
+	$oDev = "192.168.0.14"
+	Local $sR = __viReqBl($oDev,"*IDN?",true)
 
-Exit
-; debug end
+	Exit
+	; debug end
 
 #ce
 
@@ -204,7 +216,7 @@ Exit
 
 
 
-ProgressOn("Hello", "Starting up", "", -1, -1, BitOR($DLG_NOTONTOP, $DLG_MOVEABLE))
+ProgressOn("Hello from MTS suppliment", "Starting up", "", -1, -1, BitOR($DLG_NOTONTOP, $DLG_MOVEABLE))
 ProgressSet(50)
 
 ConfigFileInit("mts")
@@ -213,7 +225,8 @@ ConfigFileInit("mts")
 #include "tab_FrequencyCounter.au3" ; frequency counter tab
 #include "tab_DC_Power_Supply.au3" ; DC Power Supply tab
 #include "tab_Chamber.au3" ; thermal chamber tab
-#include "tab_debug.au3" ; visa / scpi debug tool
+#include "tab_diag.au3" ; visa / scpi debug tool
+#include "tab_oscopeFM.au3" ; oscope file manager tab
 
 
 CreateMainGUI()                                     ; create main gui window
@@ -231,7 +244,7 @@ scTab_init()                                        ; initialize oscopeTab
 fcTab_init()                                        ; initialize fcTab
 dcTab_init()                                        ; initialize dcpsTab
 tcTab_init()                                        ; initialize chamberTab
-dbgTab_init()                                       ; initialize dbgTab
+dgTab_init()                                       ; initialize dbgTab
 ProgressSet(90)
 
 ConfigReadAll()                                     ; Load config
@@ -287,14 +300,14 @@ Func Canvas_MainInit()
 	Local $aDef[2] = [800, 600]
 	If Not IsArray($aSize) Then $aSize = $aDef
 	__Canvas_Create($g_oMainCanvas, -1, $aSize[0], $aSize[1])
-	$g_oMainCanvas.Item('hWnd') = $g_hMainGui
+	$g_oMainCanvas.Item('hCanvas') = $g_hMainGui
 	Local $aCtrls[0], $n
-	If $g_oMainCanvas.Exists('aCtrls') Then $aCtrls = $g_oMainCanvas.Item('aCtrls')
+	If $g_oMainCanvas.Exists('aTabCtrls') Then $aCtrls = $g_oMainCanvas.Item('aTabCtrls')
 	$n = UBound($aCtrls)
 	ReDim $aCtrls[$n + 1]
 	$aCtrls[$n] = $g_hTab
-	$g_oMainCanvas.Item('aCtrls') = $aCtrls
-	__Canvas_ZoomCatalog($g_oMainCanvas)
+	$g_oMainCanvas.Item('aTabCtrls') = $aCtrls
+	;__Canvas_ZoomCatalog($g_oMainCanvas)
 EndFunc   ;==>Canvas_MainInit
 
 
@@ -321,15 +334,17 @@ Func CreateMainGUI()
 
 	TabCreateCanvas("Frequency Counter", "fcTab_GuiCreate")                                                 ; Tab 3
 
-	GUICtrlCreateTabItem("Settings")                                                                        ; Tab 4
+	TabCreateCanvas("ScopeFM", "sfTab_GuiCreate")                                                           ; Tab 4
 
-	GUICtrlCreateTabItem("I2C")                                                                             ; Tab 5
+	GUICtrlCreateTabItem("Settings")                                                                        ; Tab 5
 
-	GUICtrlCreateTabItem("SPI")                                                                             ; Tab 6
+	GUICtrlCreateTabItem("I2C (test)")                                                                      ; Tab 6
 
-	GUICtrlCreateTabItem("Clocks")                                                                          ; Tab 7
+	;GUICtrlCreateTabItem("SPI")                                                                             ; Tab 7
 
-	TabCreateCanvas("VISA/SCPI Debug", "dbgTab_GuiCreate", "", $CANVASZOOMTYPE_MIN)                         ; Tab 8
+	;GUICtrlCreateTabItem("Clocks")                                                                          ; Tab 8
+
+	TabCreateCanvas("Diagnostic", "dgTab_GuiCreate", "", $CANVASZOOMTYPE_MIN)                               ; Tab 9
 
 	GUICtrlCreateTabItem("")                                                                                ; Close the tab item definition structure
 
@@ -402,7 +417,7 @@ Func ConfigWriteAll()
 	dcTab_ConfigWrite()
 	tcTab_ConfigWrite()
 	fcTab_ConfigWrite()
-	dbgTab_ConfigWrite()
+	dgTab_ConfigWrite()
 	cb_ConfigWrite()
 EndFunc   ;==>ConfigWriteAll
 Func ConfigWrite()
@@ -485,7 +500,7 @@ Func ConfigReadAll()
 	dcTab_ConfigRead()
 	tcTab_ConfigRead()
 	fcTab_ConfigRead()
-	dbgTab_ConfigRead()
+	dgTab_ConfigRead()
 	__viScanDistribute()
 	cb_ConfigRead()
 EndFunc   ;==>ConfigReadAll

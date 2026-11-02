@@ -6,9 +6,9 @@
 
 		WebView functions
 
-provides:  a web page element in the gui window
+	provides:  a web page element in the gui window
 
-usage:
+	usage:
 
 	include this at the top of your main script to initialize the functions
 
@@ -74,6 +74,34 @@ Func __WebView2Visible($aWebView, $bState)
 	If UBound($aWebView) < 2 Then Return
 	_WebView2_SetVisibleInternal($aWebView[1], $bState)
 EndFunc   ;==>__WebView2Visible
+
+
+
+; #FUNCTION# ====================================================================================================================
+; Name ..........: __WebView2SetFocus
+; Description ...: Forces programmatic keyboard and visual input focus down inside the WebView2 canvas browser view.
+; Syntax ........: _WebView2_SetFocus($pController)
+; Parameters ....: $pController - Pointer to ICoreWebView2Controller or the array from _WebView2_Create
+; Return values .: Success - True
+;                  Failure - False and sets @error
+; Author ........: Custom Integration
+; ===============================================================================================================================
+Func __WebView2SetFocus($aWebView)
+	Local $pController = $aWebView
+	If IsArray($aWebView) Then
+		If UBound($aWebView) < 2 Then Return
+		$pController = $aWebView[1]
+	EndIf
+	If $pController = 0 Then Return SetError(1, 0, False)
+	Local $tVTable = DllStructCreate("ptr", $pController)                                                               ; 1. Extract the VTable address map layout pointer from raw memory
+	Local $pVTable = DllStructGetData($tVTable, 1)
+	Local $tMethods = DllStructCreate("ptr[26]", $pVTable)                                                              ; 2. Map out the array of method tracking addresses (holding at least 26 functions)
+	Local $pMoveFocus = DllStructGetData($tMethods, 1, $ICoreWebView2Controller_MoveFocus + 1)                          ; 3. Pull out the exact address offset using your target index constant
+	If $pMoveFocus = 0 Then Return SetError(2, 0, False)                                                                ;    $ICoreWebView2Controller_MoveFocus = 12. We add +1 because DllStructGetData array indices are 1-based!
+	Local $aResult = DllCallAddress("long", $pMoveFocus, "ptr", $pController, "int", 0)                                 ; 4. Execute the raw assembly address shift down to the hardware frame
+	If @error Or $aResult[0] <> $WV2_S_OK Then Return SetError(3, $aResult[0], False)                                   ;    $COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC = 0
+	Return True
+EndFunc   ;==>__WebView2SetFocus
 
 
 

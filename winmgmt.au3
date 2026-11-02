@@ -36,10 +36,12 @@
 #include <WinAPI.au3>
 #include <WinAPISysWin.au3>
 #include <SendMessage.au3> ; Required For _SendMessage
+#include <WindowsConstants.au3>
 
 
 #include "webview2tab.au3"
 #include "winfuncs.au3"
+
 
 
 
@@ -137,8 +139,8 @@ EndFunc   ;==>TabSwitch
 
 
 Global $g_aCanvas[0]                                                                        ; list of canvas in each tab
-Global $g_hCanvas = 0, $g_iTabW, $g_iTabH, $g_oCanvas                                       ; currently active tab
-Global $g_hViewport = 0, $g_iViewportX, $g_iViewportY, $g_iViewportW, $g_iViewportH = 0     ; viewport canvas for the scrollbars
+Global $g_hCanvas = 0, $g_iTabW, $g_iTabH, $g_oCanvas, $g_hViewport                         ; currently active tab
+Global $g_hViewportDef = 0, $g_iViewportX, $g_iViewportY, $g_iViewportW, $g_iViewportH = 0  ; viewport canvas for the scrollbars
 
 
 
@@ -159,10 +161,13 @@ Func TabCreateCanvas($sTabName, $fCanvasGuiCreate = '', $fTabGuiCreate = '', $iT
 	Local $oCanvas = ''
 	__Canvas_Create($oCanvas, $iTabIdx, $iW, $iH, $iType, $cTab)                            ; create and add the canvas to the aCanvas array
 
-	If $fTabGuiCreate <> '' Then Call($fTabGuiCreate, $iTabIdx, $oCanvas)                   ; call client function to populate the tab
-	Local $hCanvas = GUICreate("Canvas", $iW, $iH, 0, 0, $WS_CHILD, -1, $g_hViewport)       ; create the canvas for the tab
-	$oCanvas.Item('hWnd') = HWnd($hCanvas)
-	;GUISwitch($hCanvas) 																	; select canvas
+	If $fTabGuiCreate <> '' Then Call($fTabGuiCreate, $iTabIdx, $oCanvas)                   ; call client function to populate the tab in the main gui
+
+	Local $hViewport = __Canvas_CreateViewPort()                                            ; create viewport for this tab (as a child of the main window)
+	$oCanvas.Item('hViewport') = HWnd($hViewport)
+	Local $hCanvas = GUICreate("Canvas", $iW, $iH, 0, 0, $WS_CHILD, -1, $hViewport)         ; create the canvas as a child of the viewport
+	$oCanvas.Item('hCanvas') = HWnd($hCanvas)
+	;GUISwitch($hCanvas) 																	; select canvas (not needed as we just created the canvas)
 	Local $aSize
 	If $fCanvasGuiCreate <> '' Then _
 			$aSize = Call($fCanvasGuiCreate, $iTabIdx, $oCanvas, $hCanvas)                  ; call client function to populate the canvas
@@ -214,25 +219,43 @@ Func __Canvas_Viewport_Init()
 	$g_iViewportY = $aPageRect[1]
 	$g_iViewportW = $aPageRect[2] - $aPageRect[0]
 	$g_iViewportH = $aPageRect[3] - $aPageRect[1]
-	$g_hViewport = GUICreate("Viewport", $g_iViewportW, $g_iViewportH, $g_iViewportX, $g_iViewportY, $WS_CHILD, -1, $g_hMainGui)        ; create viewport canvas
+	;$g_hViewport = 0
+	$g_hViewportDef = GUICreate("Viewport", $g_iViewportW, $g_iViewportH, $g_iViewportX, $g_iViewportY, $WS_CHILD, -1, $g_hMainGui)        ; create viewport canvas
 	_GUIScrollBars_Init($g_hViewport)                           ; Initialize the custom Windows system scrollbar subsystem directly onto the viewport framework
 	GUISwitch($g_hMainGui)
+	;__API_ControlSetOnTopVisible($g_hViewportDef, False)
 EndFunc   ;==>__Canvas_Viewport_Init
 
+
+Func __Canvas_CreateViewPort($hParent = $g_hMainGui)
+	Local $hViewport = GUICreate("Viewport", $g_iViewportW, $g_iViewportH, $g_iViewportX, $g_iViewportY, $WS_CHILD, -1, $hParent)       ; create viewport canvas
+	_GUIScrollBars_Init($hViewport)                             ; Initialize the custom Windows system scrollbar subsystem directly onto the viewport framework
+	GUISwitch($g_hMainGui)
+	Return $hViewport
+EndFunc   ;==>__Canvas_CreateViewPort
+
+
+
+
+; ---------------------------------------------------------------------------
+; ---------------------------------------------------------------------------
+; tab change handler - switch canvases
 
 
 ;		callback for tab changed event
 Func __Canvas_OnTabChange($iActiveTab)
 	If UBound($g_aCanvas) <= $iActiveTab Then ReDim $g_aCanvas[$iActiveTab + 1]
 
-	Local $oCanvas, $hCanvas, $cTab
+	Local $oCanvas, $hCanvas, $hViewport, $cTab
 	Local $i, $n = UBound($g_aCanvas) - 1
 	For $i = 0 To $n                                    ; hide all other registered tab canvases
 		If $i = $iActiveTab Then ContinueLoop
 		$oCanvas = $g_aCanvas[$i]
 		If __IsDictionary($oCanvas) Then
-			$hCanvas = HWnd($oCanvas.Item('hWnd'))
+			$hCanvas = HWnd($oCanvas.Item('hCanvas'))
+			$hViewport = HWnd($oCanvas.Item('hViewport'))
 			If Number($hCanvas) <> 0 Then
+				__API_ControlSetOnTopVisible($hViewport, False)
 				__API_ControlSetOnTopVisible($hCanvas, False)
 				If __Canvas_IsWebView($oCanvas) Then _
 						__WebView2Visible($oCanvas.Item('aWebView'), False)
@@ -244,9 +267,14 @@ Func __Canvas_OnTabChange($iActiveTab)
 
 	$oCanvas = $g_aCanvas[$iActiveTab]
 	$g_hCanvas = 0
-	If __IsDictionary($oCanvas) Then $g_hCanvas = HWnd($oCanvas.Item('hWnd'))
+	$g_hViewport = $g_hViewportDef      ; this is the backup default viewport, in case a tab does not have a canvas, then any future calls looking for the viewport will see this one
+	If __IsDictionary($oCanvas) Then
+		$g_hCanvas = HWnd($oCanvas.Item('hCanvas'))
+		$g_hViewport = HWnd($oCanvas.Item('hViewport'))
+	EndIf
 	If $g_hCanvas = 0 Then
-		__API_ControlSetOnTopVisible($g_hViewport, False)       ; make the viewport invisible so it does not cover other tab contents
+		If $g_hViewport <> 0 Then _                             ; make the viewport invisible so it does not cover other tab contents
+				__API_ControlSetOnTopVisible($g_hViewport, False)
 		$g_oCanvas = 0                                          ; mark the global variables to signal we do not have a canvas
 		$g_iTabW = 0
 		$g_iTabH = 0
@@ -263,13 +291,20 @@ Func __Canvas_OnTabChange($iActiveTab)
 				__Canvas_AdjZoom($oCanvas)                      ; make sure all elements are scaled correctly
 		__API_ControlSetOnTopVisible($g_hViewport, True)        ; make the viewport visible
 		__API_ControlSetOnTopVisible($g_hCanvas, True)          ; make the canvas visible inside the viewport
-		If $bIsWebView Then _
-				__WebView2Visible($oCanvas.Item('aWebView'), True)
+		If $bIsWebView Then
+			Local $aWebView = $oCanvas.Item('aWebView')
+			__WebView2Visible($aWebView, True)
+			__WebView2SetFocus($aWebView)
+		Else
+			_WinAPI_SetFocus($hCanvas)                          ; Shift system focus down to the child window container
+			ControlSend($hCanvas, "", "", "{TAB}")              ; Emulate a tab press inside the canvas context to engage its first control
+		EndIf
+
 	EndIf
 
 	__Canvas_WM_SIZE($g_hMainGui, 0, 0, 0)
-	_WinAPI_RedrawWindow($g_hMainGui, 0, 0, _
-			BitOR($RDW_UPDATENOW, $RDW_ALLCHILDREN))
+	;_WinAPI_RedrawWindow($g_hMainGui, 0, 0, _
+	;		BitOR($RDW_UPDATENOW, $RDW_ALLCHILDREN))
 	;BitOR($RDW_INVALIDATE, $RDW_UPDATENOW, $RDW_ALLCHILDREN))
 
 EndFunc   ;==>__Canvas_OnTabChange
@@ -299,6 +334,87 @@ EndFunc   ;==>__API_ControlSetVisible
 
 
 
+
+; ---------------------------------------------------------------------------
+; ---------------------------------------------------------------------------
+; tab viewport and canvas popout and popin functions
+#cs
+	• Message Loop Interception(__Canvas_WM_SIZE) : Your existing __Canvas_WM_SIZE handler expects $g_hViewport To track relative coordinates inside the main UI bounds.
+	When you breakout the viewport, you should temporally set a flag(E.g., $g_bIsDetached = True) so that __Canvas_WM_SIZE doesn't attempt to snap or scale the window positions
+	while it's floating freely on the desktop.
+	• Window Close Button : Adding $WS_SYSMENU gives the detached window a standard X close button. If a user clicks it, Windows will try To destroy your viewport control.
+		You should intercept $WM_CLOSE messages For that handle, Or subclass it, To make the X button trigger _Canvas_Viewport_PopIn() instead of deleting the window framework.
+
+#ce
+
+; =======================================================================================================================
+; Function Name:    _Canvas_Viewport_Breakout
+; Description:      Detaches a viewport window from the main GUI, turning it into a standalone top-level window.
+; Parameter(s):     $hViewport - The handle of the viewport child window to break out.
+;                   $sTitle    - The title text to display on the newly created title bar.
+; =======================================================================================================================
+Func __Canvas_Popout($hViewport, $sTitle = "Detached View")
+	If Not IsHWnd($hViewport) Or $hViewport = 0 Then Return False
+
+	; 1. Pull current styles so we don't destroy custom extended states
+	Local $iOldStyle = _WinAPI_GetWindowLong($hViewport, $GWL_STYLE)
+
+	; 2. strip child flag and add Caption (Titlebar) + ThickFrame (Resizing border) + SysMenu
+	Local $iNewStyle = BitOR($iOldStyle, $WS_CAPTION, $WS_THICKFRAME, $WS_SYSMENU, $WS_MAXIMIZEBOX)
+	$iNewStyle = BitAND($iNewStyle, BitNOT($WS_CHILD)) ; Remove the child flag
+
+	_WinAPI_SetWindowLong($hViewport, $GWL_STYLE, $iNewStyle)
+
+	; 3. Detach from the main window and anchor to the Desktop (Parent = 0)
+	_WinAPI_SetParent($hViewport, 0)
+	_WinAPI_SetWindowText($hViewport, $sTitle)
+
+	; 4. Re-calculate window layout bounds to fit onto the desktop cleanly
+	Local $aPos = WinGetPos($hViewport)
+	Local $aSnap = _WinSnapToDesktop($aPos[0] + 50, $aPos[1] + 50, $aPos[2] + 100, $aPos[3] + 100) ; Offset slightly and make room for borders
+
+	; 5. SWP_FRAMECHANGED forces Windows to re-evaluate the frame structure to draw the new title bar
+	_WinAPI_SetWindowPos($hViewport, 0, $aSnap[0], $aSnap[1], $aSnap[2], $aSnap[3], _
+			BitOR($SWP_NOZORDER, $SWP_NOACTIVATE, $SWP_FRAMECHANGED))
+
+	Return True
+EndFunc   ;==>__Canvas_Popout
+
+
+; =======================================================================================================================
+; Function Name:    _Canvas_Viewport_PopIn
+; Description:      Re-attaches a standalone viewport window back into the main GUI layout framework as a child window.
+; Parameter(s):     $hViewport - The handle of the viewport window to attach.
+;                   $hParent    - The target parent window handle (typically $g_hMainGui).
+;                   $iX, $iY, $iW, $iH - The structural docking coordinates inside your tab container.
+; =======================================================================================================================
+Func __Canvas_PopIn($hViewport, $hParent, $iX, $iY, $iW, $iH)
+	If Not IsHWnd($hViewport) Or $hViewport = 0 Then Return False
+
+	; 1. Pull styles
+	Local $iOldStyle = _WinAPI_GetWindowLong($hViewport, $GWL_STYLE)
+
+	; 2. Restore child flag and strip away titlebar and borders
+	Local $iNewStyle = BitOR($iOldStyle, $WS_CHILD)
+	$iNewStyle = BitAND($iNewStyle, BitNOT(BitOR($WS_CAPTION, $WS_THICKFRAME, $WS_SYSMENU, $WS_MAXIMIZEBOX)))
+
+	_WinAPI_SetWindowLong($hViewport, $GWL_STYLE, $iNewStyle)
+
+	; 3. Re-assign parent window pipeline
+	_WinAPI_SetParent($hViewport, $hParent)
+
+	; 4. Snap back to position and force frame recalculation update
+	_WinAPI_SetWindowPos($hViewport, 0, $iX, $iY, $iW, $iH, _
+			BitOR($SWP_NOZORDER, $SWP_NOACTIVATE, $SWP_FRAMECHANGED))
+
+	_WinAPI_RedrawWindow($hParent, 0, 0, BitOR($RDW_INVALIDATE, $RDW_UPDATENOW, $RDW_ALLCHILDREN))
+	Return True
+EndFunc   ;==>__Canvas_PopIn
+
+
+
+
+
 ; ---------------------------------------------------------------------------
 ; ---------------------------------------------------------------------------
 ; Canvas resize handler
@@ -308,8 +424,10 @@ Global $g_controlBarHeight
 Func __Canvas_WM_SIZE($hWnd, $Msg, $wParam, $lParam)
 	If $hWnd <> $g_hMainGui Then Return $GUI_RUNDEFMSG
 
+	Local $iCtrlBarHeight = $g_controlBarHeight * (__IsDictionary($g_oMainCanvas) ? ($g_oMainCanvas.Exists('fzScale') ? $g_oMainCanvas.Item('fzScale') : 1) : 1)
+
 	Local $aSize = WinGetClientSize($g_hMainGui)                                                            ; 1. Keep parent tab boundaries completely synchronized with physical window scaling adjustments
-	GUICtrlSetPos($g_cTab, 0, 0, $aSize[0], $aSize[1] - $g_controlBarHeight)
+	GUICtrlSetPos($g_cTab, 0, 0, $aSize[0], $aSize[1] - $iCtrlBarHeight)
 	If $g_hCanvas = 0 Then Return $GUI_RUNDEFMSG                                                            ; if no Canvas child visible then do nothing more
 
 	Local $aPageRect = _GUICtrlTab_GetDisplayRect($g_hTab)                                                  ; 2. Recalculate working viewport bounds inside the scaled tab components
@@ -350,10 +468,12 @@ Func __Canvas_WM_SIZE($hWnd, $Msg, $wParam, $lParam)
 		_WinAPI_SetWindowPos($g_hCanvas, 0, -$iSX, -$iSY, 0, 0, _                                           ; scroll/move canvas to new position, preserve size
 				BitOR($SWP_NOSIZE, $SWP_NOZORDER, $SWP_NOACTIVATE))                                         ; SWP_NOSIZE (0x0001) preserves the canvas tracking width/height ($g_iTabW, $g_iTabH)
 	EndIf
-	_WinAPI_SetWindowPos($g_hViewport, 0, $g_iViewportX, $g_iViewportY, $g_iViewportW, $g_iViewportH, _     ; resize the viewport to match new window size
-			BitOR($SWP_NOREDRAW, $SWP_NOZORDER, $SWP_NOACTIVATE))                                           ; SWP_NOREDRAW (0x0008) = no repainting.  SWP_NOZORDER (0x0004) = don't change z order.  SWP_NOACTIVE (0x0010) = do not activate or change focus to this window pane
-	__API_UpdateScrollbarMetrics($g_hViewport, $SB_HORZ, $iMinH, $iMaxW, $iPW, Abs($iSX))                   ; update the horizontal scrollbar
-	__API_UpdateScrollbarMetrics($g_hViewport, $SB_VERT, $iMinH, $iMaxH, $iPH, Abs($iSY))                   ; update the vertical scrollbar
+	If $g_hViewport <> 0 Then
+		_WinAPI_SetWindowPos($g_hViewport, 0, $g_iViewportX, $g_iViewportY, _                               ; resize the viewport to match new window size
+				$g_iViewportW, $g_iViewportH, BitOR($SWP_NOREDRAW, $SWP_NOZORDER, $SWP_NOACTIVATE))         ; SWP_NOREDRAW (0x0008) = no repainting.  SWP_NOZORDER (0x0004) = don't change z order.  SWP_NOACTIVE (0x0010) = do not activate or change focus to this window pane
+		__API_UpdateScrollbarMetrics($g_hViewport, $SB_HORZ, $iMinH, $iMaxW, $iPW, Abs($iSX))               ; update the horizontal scrollbar
+		__API_UpdateScrollbarMetrics($g_hViewport, $SB_VERT, $iMinH, $iMaxH, $iPH, Abs($iSY))               ; update the vertical scrollbar
+	EndIf
 
 	If __IsDictionary($g_oCanvas) Then                                                                      ; if available then
 		$g_oCanvas.Item('iSX') = $iSX                                                                       ;   update canvas scroll bar positions
@@ -582,6 +702,9 @@ EndFunc   ;==>__Canvas_Scroll
 
 
 
+
+
+
 ; ---------------------------------------------------------------------------
 ; ---------------------------------------------------------------------------
 ; Canvas zoom functions
@@ -590,13 +713,14 @@ EndFunc   ;==>__Canvas_Scroll
 
 
 
-Func __Canvas_ZoomCatalog($oCanvas)                                             ; catalog all window elements in the gui for later zooming
+Func __Canvas_ZoomCatalog($oCanvas, $sZarray = 'aCanvasCtrls')                  ; catalog all window elements in the gui for later zooming
 	If Not __IsDictionary($oCanvas) Then Return
-	Local $hCanvas = HWnd($oCanvas.Item('hWnd'))
+	Local $hCanvas = HWnd($oCanvas.Item('hCanvas'))
 	If Number($hCanvas) = 0 Then Return SetError(-1, 0, False)
 	Local $i, $n
 	Local $iColumn = -2                                                         ; column and row to pull data from $aChildren or $aList
-	Local $aChildren = $oCanvas.Item('aCtrls')
+	Local $aChildren
+	If $oCanvas.Exists($sZarray) Then $aChildren = $oCanvas.Item($sZarray)
 	$oCanvas.Remove('bZoomNeedCataloged')
 	;__ConsolePrintVars("zoomCatalog, ","aChildren",$aChildren,"oCanvas",$oCanvas)
 	If IsArray($aChildren) Then
@@ -644,30 +768,31 @@ Func __Canvas_ZoomCatalog($oCanvas)                                             
 		$aCtrls[$i][4] = $aPos[3]                                               ; H
 		$aCtrls[$i][5] = __API_ControlGetFontSize($hCtrl)                       ; font size
 	Next
-	$oCanvas.Item('aCtrls') = $aCtrls
+	$oCanvas.Item($sZarray) = $aCtrls
 	If Not $oCanvas.Exists('fzScale') Then $oCanvas.Item('fzScale') = 1.0
 
 EndFunc   ;==>__Canvas_ZoomCatalog
 
 
 
-Func __Canvas_AdjZoom($oCanvas, $fAdj = 0, $UX = False)
+Func __Canvas_AdjZoom($oCanvas, $fAdj = 0, $UX = False, $sZarray = 'aCanvasCtrls')
 	If Not __IsDictionary($oCanvas) Then Return 0
 	Local $fZoom = $oCanvas.Item('fzScale')
 	If Number($fZoom) = 0 Then $fZoom = 1.0
 	$fZoom += $fAdj
 	If 0.97 < $fZoom And $fZoom < 1.03 Then $fZoom = 1.0                     ; if within 3% of 100% then snap to 100%
-	Return __Canvas_SetZoom($oCanvas, $fZoom, $UX)
+	Return __Canvas_SetZoom($oCanvas, $fZoom, $UX, $sZarray)
 EndFunc   ;==>__Canvas_AdjZoom
 
 
 
-Func __Canvas_SetZoom($oCanvas, $fNewScale = "", $UX = False)
+Func __Canvas_SetZoom($oCanvas, $fNewScale = "", $UX = False, $sZarray = 'aCanvasCtrls')
 	If Not __IsDictionary($oCanvas) Then Return 0
 	If __Canvas_IsWebView($oCanvas) Then Return 0
 	;__ConsolePrintVars("__Canvas_SetZoom, ", 'fNewScale', $fNewScale, 'oCanvas width', $oCanvas.Item('iW'))
 	If Number($fNewScale) = 0 Then $fNewScale = 1.0                         ; if $fNewScale is invalid then reset to 1.0
-	Local $aCtrls = $oCanvas.Item('aCtrls')                                 ; get the gui control elements array from the canvas object
+	If Not $oCanvas.Exists($sZarray) Then Return 0
+	Local $aCtrls = $oCanvas.Item($sZarray)                                 ; get the gui control elements array from the canvas object
 	;__ConsolePrintVars("__Canvas_SetZoom, ", "aCtrls", $aCtrls)
 	If Not IsArray($aCtrls) Then Return 0                                   ; must be array
 	If UBound($aCtrls, 0) <> 2 Then Return 0                                ; 2D
@@ -735,10 +860,10 @@ EndFunc   ;==>__Canvas_GetZoom
 
 
 
-Func __Canvas_ZoomFind($oCanvas, $hWnd)                                     ; return the aZoomControls array index number of control $hWnd.  return -1 if not found
+Func __Canvas_ZoomFind($oCanvas, $hWnd, $sZarray = 'aCanvasCtrls')          ; return the aZoomControls array index number of control $hWnd.  return -1 if not found
 	If Not __IsDictionary($oCanvas) Then Return -1
-	If Not $oCanvas.Exists('aCtrls') Then Return -1
-	Local $aControls = $oCanvas.Item('aCtrls')
+	If Not $oCanvas.Exists($sZarray) Then Return -1
+	Local $aControls = $oCanvas.Item($sZarray)
 	If Not IsArray($aControls) Then Return -1
 	If UBound($aControls, 0) <> 2 Then Return -1
 	If UBound($aControls, 2) < 6 Then Return -1
@@ -975,4 +1100,46 @@ EndFunc   ;==>_CustomGetMonitorInfo
 
 
 
+
+
+; -------------------------------------------------------------------------------------------------------------------------
+; -------------------------------------------------------------------------------------------------------------------------
+; -------------------------------------------------------------------------------------------------------------------------
+;
+;
+;
+
+
+;			__Canvas_GetCtrlPic
+; task:		get the binary data of the picture stored in the aCanvasCtrl zoom array of the canvas for the given picture
+; in:		$oCanvas = canvas dictionary object
+;			iPic = index within the 'aCanvasCtrls' array of the picture gui object.  if < 0 then it will use hPic to find
+Func __Canvas_GetCtrlPic($oCanvas, ByRef $iPic, $hPic, $sZarray = 'aCanvasCtrls')
+	If Not __IsDictionary($oCanvas) Then Return SetError(-1, 0, 0)
+	If $iPic < 0 Then $iPic = __Canvas_ZoomFind($oCanvas, $hPic)
+	If $iPic < 0 Then Return SetError(-1, 0, 0)
+	If Not $oCanvas.Exists($sZarray) Then Return SetError(-1, 0, 0)
+	Local $aCtrls = $oCanvas.Item($sZarray)
+	If Not IsArray($aCtrls) Then Return SetError(-1, 0, 0)
+	If UBound($aCtrls, 0) <> 2 Then Return SetError(-1, 0, 0)
+	If UBound($aCtrls, 2) < 6 Then Return SetError(-1, 0, 0)
+	If UBound($aCtrls, 1) <= $iPic Then Return SetError(-1, 0, 0)
+	Return $aCtrls[$iPic][5]                                                        ; the picture binary data will be stored in the font size field of the zoom array
+EndFunc   ;==>__Canvas_GetCtrlPic
+
+
+
+
+
+
+
+
+
+
+; -------------------------------------------------------------------------------------------------------------------------
+; -------------------------------------------------------------------------------------------------------------------------
+; -------------------------------------------------------------------------------------------------------------------------
+;
+;
+;
 

@@ -484,7 +484,7 @@ EndFunc   ;==>_WinAPI_RemoveProp
 ;			only update if state changes, and defer update if state is waffling
 ; in:		$cBtn = button control handle
 ;			$bNew = new state true/false
-;			$bSelf = true to update state now and not filter out waffling
+;			$bImmed = true to update state now and not defer to filter out waffling
 ;			$iBCon = background color when button is in 'on' state
 ;			$iFCon = foreground color when button is in 'on' state
 ;			$iBCoff = background color when button is in 'off' state
@@ -492,7 +492,7 @@ EndFunc   ;==>_WinAPI_RemoveProp
 ;			$bText = true to set button text to 'on' or 'off'.  False to leave text alone
 ; out:		button updated if needed.
 ; sop:		A property is added to the button to save the current (bNow) and previous (bPrev) states, this gives us 3 states (bPrev, bNow, and bNew).
-;			if bSelf is true then (the button gui is updated if any of the states differ)
+;			if bSelf is true then (the button gui is updated if any of the states differ) - do not do deferred updates
 ;			  if bPrev=bNow and bNow=bNew then skip the gui update
 ;			if bSelf is false then
 ;			  if bPrev = bNew and bNow <> bPrev then the gui update is deferred until the next call
@@ -509,7 +509,7 @@ EndFunc   ;==>_WinAPI_RemoveProp
 ; usage:	When a button is pushed by the user, call this function with bSelf = True
 ;			if the button status is read from the visa device, call this function with bSelf = False
 ;
-Func __GuiToggleButtonSetOnState($cBtn, $bNew, $bSelf = True, $iBCon = $COLOR_YELLOW, $iFCon = $COLOR_BLACK, $iBCoff = $COLOR_GRAY2, $iFCoff = $COLOR_BLACK, $bText = True)
+Func __GuiToggleButtonSetOnState($cBtn, $bNew, $bImmed = True, $iBCon = $COLOR_YELLOW, $iFCon = $COLOR_BLACK, $iBCoff = $COLOR_GRAY2, $iFCoff = $COLOR_BLACK, $bText = True)
 	Local $hBtn = GUICtrlGetHandle($cBtn)
 	Local $iUdat = _WinAPI_GetProp($hBtn, "state")                                                              ; pull history from user property field in control
 	Local $bPrev = BitAND($iUdat, 1)                                                                            ; previous state of button
@@ -519,8 +519,8 @@ Func __GuiToggleButtonSetOnState($cBtn, $bNew, $bSelf = True, $iBCon = $COLOR_YE
 			BitOR(BitShift($bNew, -1), $bNow, BitAND($iUdat, 0xFFFFFFFC)))                                      ; rotate now and prev bits and store back into the data field
 	$bNew = ($bNew <> 0)
 
-	;If Not ((Not $bNew And $bPrev) Or ($bNew And Not $bPrev) Or ($bSelf And Not $bNow And $bPrev) Or ($bSelf And Not $bNew And $bNow)) Then Return
-	If $bSelf Then
+	;If Not ((Not $bNew And $bPrev) Or ($bNew And Not $bPrev) Or ($bImmed And Not $bNow And $bPrev) Or ($bImmed And Not $bNew And $bNow)) Then Return
+	If $bImmed Then
 		If $bNew = $bNow And $bNow = $bPrev Then Return
 	Else
 		If $bNew = $bPrev Then Return

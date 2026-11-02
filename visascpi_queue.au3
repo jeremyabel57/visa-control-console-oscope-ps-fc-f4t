@@ -18,120 +18,120 @@ Global $g_viPrintLoopRead = 0
 
 #cs
 
-VISA/SCPI and Modbus TCP asynchronous queue library
-	send request, then later check back for response
-	requests are queued and sent sequentially after responses are received as needed
-	some scripting functions are included, see below
-	each IP address given creates an instance in a global list for continued communication with the VISA device
+	VISA/SCPI and Modbus TCP asynchronous queue library
+		send request, then later check back for response
+		requests are queued and sent sequentially after responses are received as needed
+		some scripting functions are included, see below
+		each IP address given creates an instance in a global list for continued communication with the VISA device
 
 
-visa ip address format:
-   [raw:]ip[:port]
-   if port not given, then it will be replaced with 5025 or instr depending on the protocol
-   specify "raw:" prefix to use raw socket instead of visa32.dll VXI-11 protocol
+	visa ip address format:
+	   [raw:]ip[:port]
+	   if port not given, then it will be replaced with 5025 or instr depending on the protocol
+	   specify "raw:" prefix to use raw socket instead of visa32.dll VXI-11 protocol
 
 
-nonblocking functions:
-	__viReq($oDev, $sReq, $bWait=True, $iTimeoutMS=1000)
-		$oDev = ip address or a session handle variable
-			if this is just an ip address, then a session is opened, communication commences, and the session is closed
-			if this is a session handle, then the communication is performed but the session connection is left open
-		$sReq = visa/scpi request/command string
-		$bWait = true to wait for a response, false if this is a command with no expected response
-		$iTimeoutMS = timeout in milliseconds to wait for response (-1 = do not wait)
-		Adds the request to the queue
-	__viCmd($oDev, $sCmd)
-		same as __viReq except do not wait for a response ($bWait = false)
-	__viUploadFile($oDev, $sFile, $sReq, $iTimeoutMS=5000)
-		$sFile = file path/name of file to send
-		$sReq = visa command to send as the prefix to the file data
-	__viDownloadFile($oDev, $sFile, $sReq, $iTimeoutMS=5000)
-		$sFile = file path/name to save downloaded file
-		$sReq = visa command to send to initiate the transfer
-	__viIsReqDone($oDev)
-		checks and clears the reqdone flag.  returns true if the latest command being executed is done including any reply received.
-		use this to check if the request/command you send is finished
-	__viCmdRetStatus($oDev)
-		return the exit status of the last command that finished - 0=error, 1=ok
-	__viIsIdle($oDev)
-		returns true if there are no pending commands.  there may still be pending incomming data
+	nonblocking functions:
+		__viReq($oDev, $sReq, $bWait=True, $iTimeoutMS=1000)
+			$oDev = ip address or a session handle variable
+				if this is just an ip address, then a session is opened, communication commences, and the session is closed
+				if this is a session handle, then the communication is performed but the session connection is left open
+			$sReq = visa/scpi request/command string
+			$bWait = true to wait for a response, false if this is a command with no expected response
+			$iTimeoutMS = timeout in milliseconds to wait for response (-1 = do not wait)
+			Adds the request to the queue
+		__viCmd($oDev, $sCmd)
+			same as __viReq except do not wait for a response ($bWait = false)
+		__viUploadFile($oDev, $sFile, $sReq, $iTimeoutMS=5000)
+			$sFile = file path/name of file to send
+			$sReq = visa command to send as the prefix to the file data
+		__viDownloadFile($oDev, $sFile, $sReq, $iTimeoutMS=5000)
+			$sFile = file path/name to save downloaded file
+			$sReq = visa command to send to initiate the transfer
+		__viIsReqDone($oDev)
+			checks and clears the reqdone flag.  returns true if the latest command being executed is done including any reply received.
+			use this to check if the request/command you send is finished
+		__viCmdRetStatus($oDev)
+			return the exit status of the last command that finished - 0=error, 1=ok
+		__viIsIdle($oDev)
+			returns true if there are no pending commands.  there may still be pending incomming data
 
-	__viRet($oDev)
-		pulls an item from the return queue
-			every command that finishes will put its exit status in this queue
-			every visa message received will put its data in this queue
-		if the item is a command status it is the return value
-		if the item is received data then the data is the return value, and the status code is @extended
-	__viHasRet($oDev)
-		returns true if there are items in the return queue
+		__viRet($oDev)
+			pulls an item from the return queue
+				every command that finishes will put its exit status in this queue
+				every visa message received will put its data in this queue
+			if the item is a command status it is the return value
+			if the item is received data then the data is the return value, and the status code is @extended
+		__viHasRet($oDev)
+			returns true if there are items in the return queue
 
-	__mbWrite($oDev, $sDataType, $iRegAddr, $nValue)
-		sends a modbus register write command.  Sets register $iRegAddr to value $nValue as datatype interpreted by $sDataType
-	__mbReadBl($oDev, $sDataType, $iRegAddr, $iTimeoutMS)
-		same as __mbRead, but waits for and returns the value read from the register
-	__mbRead($oDev, $sDataType, $iRegAddr, $iTimeoutMS)
-		sends a modbus register read request
-		$sDataType = "Nt", n=number of 16-bit words, t=type (i=integer, f=float, s=string)
-	__mbRet($oDev)
-		same as __viRet - use this to pull the return value from the async __mbRead
-	__mbHasRet($oDev)
-		same as __viHasRet - use this to check if there is a response yet from async __mbRead
-
-
-blocking functions:
-	__viReqBl($oDev,$sReq,$bWait=true,$iTimeoutMS=2000)
-		will send the request or command and wait until the command is sent or the request receives a reply, and then return the reply
-	__viCmdBl($oDev,$sCmd)
-		same as __viReqBl, but does not wait for a reply
-
-	__viGetID($oDev)
-		sends the scpi identity request *IDN? and waits for a reply
-		if it does not work the first time, then it switches between VXI-11 and raw socket modes and tries again
-		use this the first time to make sure the device is responding to the protocol,
-		then subsequent uses of $oDev will use the working protocol.
+		__mbWrite($oDev, $sDataType, $iRegAddr, $nValue)
+			sends a modbus register write command.  Sets register $iRegAddr to value $nValue as datatype interpreted by $sDataType
+		__mbReadBl($oDev, $sDataType, $iRegAddr, $iTimeoutMS)
+			same as __mbRead, but waits for and returns the value read from the register
+		__mbRead($oDev, $sDataType, $iRegAddr, $iTimeoutMS)
+			sends a modbus register read request
+			$sDataType = "Nt", n=number of 16-bit words, t=type (i=integer, f=float, s=string)
+		__mbRet($oDev)
+			same as __viRet - use this to pull the return value from the async __mbRead
+		__mbHasRet($oDev)
+			same as __viHasRet - use this to check if there is a response yet from async __mbRead
 
 
-script functions:
-	__viScriptFile($oDev, $sFile)			read a file line by line and process it as a script, putting its commands into the queue
+	blocking functions:
+		__viReqBl($oDev,$sReq,$bWait=true,$iTimeoutMS=2000)
+			will send the request or command and wait until the command is sent or the request receives a reply, and then return the reply
+		__viCmdBl($oDev,$sCmd)
+			same as __viReqBl, but does not wait for a reply
 
-	script statements:
-		[write|cmd] visaStatement			send visaStatement to visa device - use this for visa/scpi commands/requests
-		$var=visaStatement					read response from visa device and store in given variable name
-		cd|chdir path						change local directory to 'path'
-		sleep timeMS						sleep for 'timeMS' milliseconds
-		download::filename::visaStatement	read response from request 'visaStatement' and store it in file 'filename'
-											use this to download files, including screenshots
-		upload::filename::visaStatement		sends visa/scpi statement prefix and append with file data from 'filename' with IEEE488.2 length header
-											use this to upload files
-		logfile filename					set the log file name and path to 'filename'
-		log	string							append 'string' to the logfile - use this for saving measurements.  'string' is evaluated with Execute() - see below
-		set $var expr                   	set variable 'var' to the value of expression 'expr'
-		close								close the connection.  it will not reopen until the next visa or modbus command is attempted
-
-		sel[ect] [sc|dc|tc|fc]				select active visa device.  all following visa commands will be sent to that device.  This device must be registered
-											in the $g_oViSelect dictionary under the identifier sc|dc|tc|fc for it to work, otherwise the commands are skipped
+		__viGetID($oDev)
+			sends the scpi identity request *IDN? and waits for a reply
+			if it does not work the first time, then it switches between VXI-11 and raw socket modes and tries again
+			use this the first time to make sure the device is responding to the protocol,
+			then subsequent uses of $oDev will use the working protocol.
 
 
-	script conditional statements:
-		if cond								if cond evaluates to true then execute the first statement body
-		  statement block...
-		else								optional else statement body, execute if cond is false
-		  statement block...
-		end									close the if and/or else statement body
+	script functions:
+		__viScriptFile($oDev, $sFile)			read a file line by line and process it as a script, putting its commands into the queue
 
-		while cond							while loop: while cond is true keep executing the body statements.  condition is evaluated before execution of the body
-		  statement block...
-		end									close the while statement body
+		script statements:
+			[write|cmd] visaStatement			send visaStatement to visa device - use this for visa/scpi commands/requests
+			$var=visaStatement					read response from visa device and store in given variable name
+			cd|chdir path						change local directory to 'path'
+			sleep timeMS						sleep for 'timeMS' milliseconds
+			download::filename::visaStatement	read response from request 'visaStatement' and store it in file 'filename'
+												use this to download files, including screenshots
+			upload::filename::visaStatement		sends visa/scpi statement prefix and append with file data from 'filename' with IEEE488.2 length header
+												use this to upload files
+			logfile filename					set the log file name and path to 'filename'
+			log	string							append 'string' to the logfile - use this for saving measurements.  'string' is evaluated with Execute() - see below
+			set $var expr                   	set variable 'var' to the value of expression 'expr'
+			close								close the connection.  it will not reopen until the next visa or modbus command is attempted
 
-		do									do until loop: repeat body block until cond evaluates true.  condition is evaulated at end of execution of the body
-		  statement block...
-		until cond							close the do until loop
+			sel[ect] [sc|dc|tc|fc]				select active visa device.  all following visa commands will be sent to that device.  This device must be registered
+												in the $g_oViSelect dictionary under the identifier sc|dc|tc|fc for it to work, otherwise the commands are skipped
 
-	 string substitution:  substrings enclosed with curley brackets { } are evaluated as expressions and the result is substituted
-	   this uses autoit execute() function, so variable names begin with $, math expressions are evaluated, and possibly autoit commands
-	   example:
-			$period=MEASUrement:MEAS2:RESUlts:ALLacq:MEAN?							read the measured clock period
-			:SEARCH:SEARCH1:TRIGGER:A:PULSEWIDTH:LOWLIMIT {2.5*$period}				set search1 to look for clock pulses wider than 2.5 * period
+
+		script conditional statements:
+			if cond								if cond evaluates to true then execute the first statement body
+			  statement block...
+			else								optional else statement body, execute if cond is false
+			  statement block...
+			end									close the if and/or else statement body
+
+			while cond							while loop: while cond is true keep executing the body statements.  condition is evaluated before execution of the body
+			  statement block...
+			end									close the while statement body
+
+			do									do until loop: repeat body block until cond evaluates true.  condition is evaulated at end of execution of the body
+			  statement block...
+			until cond							close the do until loop
+
+		 string substitution:  substrings enclosed with curley brackets { } are evaluated as expressions and the result is substituted
+		   this uses autoit execute() function, so variable names begin with $, math expressions are evaluated, and possibly autoit commands
+		   example:
+				$period=MEASUrement:MEAS2:RESUlts:ALLacq:MEAN?							read the measured clock period
+				:SEARCH:SEARCH1:TRIGGER:A:PULSEWIDTH:LOWLIMIT {2.5*$period}				set search1 to look for clock pulses wider than 2.5 * period
 
 
 
@@ -190,7 +190,7 @@ Global Const $VI_ATTR_RSRC_CLASS = 0xBFFF0001                                   
 Global Const $VI_ATTR_TMO_VALUE = 0x3FFF001A
 
 
-Global $g_dbg_hOutput, $g_dbg_hStack, $g_dbg_hQueue                                         ; debug tab handles for monitor windows
+Global $g_dg_hOutput, $g_dg_hStack, $g_dg_hQueue                                         ; debug tab handles for monitor windows
 
 
 
@@ -209,40 +209,40 @@ Global $g_dbg_hOutput, $g_dbg_hStack, $g_dbg_hQueue                             
 
 
 #cs
-; VISA/SCPI instrument management functions
-; ----------------------------------------------
-Func __viScriptTest_debug()
+	; VISA/SCPI instrument management functions
+	; ----------------------------------------------
+	Func __viScriptTest_debug()
 
-	Local $sCmds = _
-			'set $i 0' & @CRLF & _
-			'while $i < 5' & @CRLF & _
-			'  set $i $i + 1' & @CRLF & _
-			'  if $i = 4' & @CRLF & _
-			'    sleep 400' & @CRLF & _
-			'  else' & @CRLF & _
-			'    sleep 100' & @CRLF & _
-			'  end' & @CRLF & _
-			'end' & @CRLF & _
-			'do' & @CRLF & _
-			'  set $i $i - 1' & @CRLF & _
-			'  if $i = 4' & @CRLF & _
-			'    sleep 400' & @CRLF & _
-			'  end' & @CRLF & _
-			'until $i <= 0' & @CRLF & _
-			'while $i > 5' & @CRLF & _
-			'  set $i $i + 1' & @CRLF & _
-			'  if $i = 4' & @CRLF & _
-			'    sleep 400' & @CRLF & _
-			'  else' & @CRLF & _
-			'    sleep 100' & @CRLF & _
-			'  end' & @CRLF & _
-			'end' & @CRLF & _
-			''
-	Local $viDev = "127.0.0.1"
-	__viScript($viDev, $sCmds, "", 1000)
-	__viFlush($viDev)
+		Local $sCmds = _
+				'set $i 0' & @CRLF & _
+				'while $i < 5' & @CRLF & _
+				'  set $i $i + 1' & @CRLF & _
+				'  if $i = 4' & @CRLF & _
+				'    sleep 400' & @CRLF & _
+				'  else' & @CRLF & _
+				'    sleep 100' & @CRLF & _
+				'  end' & @CRLF & _
+				'end' & @CRLF & _
+				'do' & @CRLF & _
+				'  set $i $i - 1' & @CRLF & _
+				'  if $i = 4' & @CRLF & _
+				'    sleep 400' & @CRLF & _
+				'  end' & @CRLF & _
+				'until $i <= 0' & @CRLF & _
+				'while $i > 5' & @CRLF & _
+				'  set $i $i + 1' & @CRLF & _
+				'  if $i = 4' & @CRLF & _
+				'    sleep 400' & @CRLF & _
+				'  else' & @CRLF & _
+				'    sleep 100' & @CRLF & _
+				'  end' & @CRLF & _
+				'end' & @CRLF & _
+				''
+		Local $viDev = "127.0.0.1"
+		__viScript($viDev, $sCmds, "", 1000)
+		__viFlush($viDev)
 
-EndFunc   ;==>scTab_debug
+	EndFunc   ;==>scTab_debug
 #ce
 
 
@@ -568,6 +568,7 @@ Func __viOpen($oDev, $retry = 1)
 	Else                                                                                ; else we are using VXI-11 protocol
 		__viCheckRMhandle()
 		Local $aResult = __viOpenDllCall($oDev)
+		If @error Or Not IsArray($aResult) Then Return SetError(@error, @extended, 0)
 		Local $iStatus = $aResult[0]
 		If $iStatus = 0xBFFF000E Then                                                   ; if error is RM not opened, then
 			__viClose($__vi_hRM)
@@ -586,14 +587,12 @@ EndFunc   ;==>__viOpen
 Func __viOpenDllCall($oDev)
 	; ViStatus viOpen(ViSession rm_session, ViRsrc rsrcName, ViAccessMode accessMode, ViUInt32 timeout, ViSession *vi_session);
 	Local $hSession_Out = 0
-	Local $aRet = DllCall($__vi_hDll, "long", "viOpen", _                               ; _viOpen dll call
+	Return DllCall($__vi_hDll, "long", "viOpen", _                                      ; _viOpen dll call
 			$__viSysUint32_64, $__vi_hRM, _                                             ; Resource Manager Handle
 			"str", $oDev.Item('viAddr'), _                                              ; VISA resource address String
 			"ulong", 0, _                                                               ; Access Mode (0 = Default)
 			"ulong", 0, _                                                               ; Timeout (0 = Default)
 			$__viSysUint32_64ptr, $hSession_Out)                                        ; Dereferenced variable pointer to receive the Device Handle
-	If @error Then Return SetError(@error, @extended, $aRet)
-	Return $aRet
 EndFunc   ;==>__viOpenDllCall
 
 
@@ -643,7 +642,9 @@ Func __viCheckRMhandle()
 	EndIf
 	Local $aResult = DllCall($__vi_hDll, "long", "viOpenDefaultRM", $__viSysUint32_64ptr, 0)    ; open the visa resource manager
 	If @error Then
-		ConsoleWrite("ERROR: 'visa32.dll' not found. Ensure NI-VISA runtime is installed." & @CRLF)
+		ConsoleWrite(@CRLF & "ERROR: 'visa32.dll' not found. Ensure NI-VISA runtime is installed." & @CRLF)
+		ConsoleWrite("       Dowload URL:  https://www.ni.com/en/support/downloads/drivers/download.ni-visa.html" & @CRLF)
+		ConsoleWrite("       Dowload URL:  https://www.ni.com/en/support/downloads/drivers/download/packaged.ni-visa.616429.html" & @CRLF)
 		Return SetError(@error, 0, 0)
 	EndIf
 	Local $iStatus = $aResult[0]
@@ -1585,7 +1586,7 @@ Func __viLoopExec($oDev)
 
 			EndIf                                                                           ;   end if
 
-			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $sCmd & " (" & (Not $bCond) & ")" & @CRLF)
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "> " & $sCmd & " (" & (Not $bCond) & ")" & @CRLF)
 
 			If $bCond Then                                                                  ;   if condition is true then
 				__viLoopExecStackPop($oStack, $oDev)                                        ;     exit the block
@@ -1611,7 +1612,7 @@ Func __viLoopExec($oDev)
 				$bCond = __viEvalExpr(__pQueCond($oStackTop), $oDev)                        ;     if loop condition is true then set flag to exit the block
 				If $g_viPrintpQueCond Then _
 						__ConsolePrintVars("__viLoopExecStack, ", "until cond " & $bCond, __pQueCond($oStackTop))
-				If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $sCmd & " (" & $bCond & ")" & @CRLF)
+				If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "> " & $sCmd & " (" & $bCond & ")" & @CRLF)
 
 			EndIf                                                                           ;   end if
 			If $bCond Then                                                                  ;   if condition is true then
@@ -1662,7 +1663,7 @@ Func __viLoopExec($oDev)
 
 
 	#cs
-	    behavior of __viLoopExecCmd
+		   behavior of __viLoopExecCmd
 		. if we have a non-conditional command then we push it into the statement block we are currently holding at the top of the stack
 		  - if skip flag set then we do not process the command
 		. if we encounter a conditional flow control statement
@@ -1671,10 +1672,10 @@ Func __viLoopExec($oDev)
 		    . the closed statement block will still exist as an entry in the previous pQue item on the stack
 			. the closed statement is also unparked so that the next time it is encountered it will be processed (if we loop back)
 		  - if skip flag is set then we do not loop back, even if the loop condition flags us to do so
-	
+
 		behavior of the 'park' mode:
 		. the pQue is parked when we have not received all of the statements in the block.  we continue to process them in real-time
-	
+
 		behavior of the 'skip' flag:
 		. only used for pQues that are parked - real time processing script statements as we receive them
 		. if the current statement block is marked 'skip' then if we push a new statement block on the stack then the new block is also 'skip'
@@ -1695,7 +1696,7 @@ Func __viLoopExec($oDev)
 		If StringRight($sArg, 5) = " then" Then $sArg = StringTrimRight($sArg, 5)           ;   if a 'then' is added to the end of the line, remove it to get just the condition
 		__viLoopExecStackPush($oStack, __pQueNew($sCmd, $sArg), $oDev, _
 				Not __viEvalExpr($sArg, $oDev))                                             ;   push start of new 'if' statement block into cStack
-		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $sCmd & " " & $sArg & @CRLF)
+		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "> " & $sCmd & " " & $sArg & @CRLF)
 
 		Return 1                                                                            ;   return, we are done processing this statement
 
@@ -1704,14 +1705,14 @@ Func __viLoopExec($oDev)
 			$bSkip = Not $bSkip                                                             ;   'else' block 'skip' flag evaluate to opposite of 'if' block 'skip' flag
 			__viLoopExecUnparkStackPop($oStack, $oStackTop, $oDev)                          ;   close the 'if' block
 		EndIf
-		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $sCmd & @CRLF)
+		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "> " & $sCmd & @CRLF)
 		__viLoopExecStackPush($oStack, __pQueNew($sCmd, $sArg), $oDev, $bSkip)              ;   push start of new 'else' statement block into cStack
 		Return 1                                                                            ;   return, we are done processing this statement
 
 	ElseIf $sCmd = "while" Then                                                             ; else if cmd is 'while' then
 		$bSkip = Not __viEvalExpr($sArg, $oDev)                                             ;   evaluate cond before starting loop and set 'skip' flag as needed
 		If $g_viPrintCondCmds Then __ConsolePrintVars("__viLoopExec, ", "cond cmd while " & $sArg, $bSkip)
-		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $sCmd & " " & $sArg & @CRLF)
+		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "> " & $sCmd & " " & $sArg & @CRLF)
 		__viLoopExecStackPush($oStack, __pQueNew($sCmd, $sArg), $oDev, $bSkip)              ;   push start of new 'while/end' statement block into cStack
 		Return 1                                                                            ;   return, we are done processing this statement
 
@@ -1720,15 +1721,15 @@ Func __viLoopExec($oDev)
 		If $spCmd = "while" Then                                                            ;   if closing 'while' block then
 			__pQueRelease($oStackTop)                                                       ;     unpark the block and leave it at the top of the stack for looping
 			If $bSkip Then __viLoopExecUnparkStackPop($oStack, $oStackTop, $oDev)           ;     if skip flag set then pop the while block off the execution stack
-			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> end while" & @CRLF)
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "> end while" & @CRLF)
 
 		ElseIf $spCmd = "if" Then                                                           ;   else if closing 'if' block then
 			__viLoopExecUnparkStackPop($oStack, $oStackTop, $oDev)                          ;     close the block and pop it off the stack
-			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> end if" & @CRLF)
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "> end if" & @CRLF)
 
 		ElseIf $spCmd = "else" Then                                                         ;   else if closing 'else' block then
 			__viLoopExecUnparkStackPop($oStack, $oStackTop, $oDev)                          ;     close the block and pop it off the stack
-			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> end if" & @CRLF)
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "> end if" & @CRLF)
 
 		EndIf                                                                               ;   end if		(else it does not match any qualified statements, we ignore it)
 		If $g_viPrintCondCmds Then __ConsolePrintVars("__viLoopExec, ", "end cmd post oStack", $oStack)
@@ -1736,14 +1737,14 @@ Func __viLoopExec($oDev)
 
 	ElseIf $sCmd = "do" Then
 		__viLoopExecStackPush($oStack, __pQueNew($sCmd, $sArg), $oDev)                      ; push start of new 'do/until' statement block into cStack
-		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> do" & @CRLF)
+		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "> do" & @CRLF)
 		Return 1                                                                            ;   return, we are done processing this statement
 
 	ElseIf $sCmd = "until" Then
 		If $spCmd <> "do" Then Return 1                                                     ; script has until without do, ignore until
 		__pQueSet($oStackTop, $sCmd, $sArg)                                                 ; update the 'cmd' field to 'until'
 		__pQueSetDone($oStackTop)                                                           ; set the queue to the 'done' state so it is caught on next cycle for evaluating loop condition
-		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> until " & $sArg & " (" & $bSkip & ")" & @CRLF)
+		If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "> until " & $sArg & " (" & $bSkip & ")" & @CRLF)
 		If $bSkip Then __viLoopExecUnparkStackPop($oStack, $oStackTop, $oDev)               ; if skip flag set then do not loop this block
 		Return 1                                                                            ;   return, we are done processing this statement
 	EndIf
@@ -1984,7 +1985,7 @@ Func __viLoopExec($oDev)
 	EndIf                                                                                   ; end if
 	$oDev.Item('waitReply') = $waitReply                                                    ; set waitReply to what was requested
 
-	If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "> " & $oDev.Item('cmd') & @CRLF) ;  & "  '" & $sReq & "'" & @CRLF)
+	If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "> " & $oDev.Item('cmd') & @CRLF) ;  & "  '" & $sReq & "'" & @CRLF)
 
 	;if $oDev.Item('viIpMode') then __viFlushInputBuffer($oDev)  							; if raw socket mode then flush input buffer before sending next command as a precaution
 
@@ -2136,7 +2137,7 @@ Func __viLoopExecStackPushDbg($oStack, $opQue, $oDev)                           
 			If $sCmd = "if" Then $s &= " (" & (Not $bSkip) & ")"
 			If $opQue.Exists('bCond') Then $s &= ", bCond=" & $opQue.Item('bCond')
 			$s &= ", skip=" & $bSkip
-			__GUICtrlEdit_StackPush($g_dbg_hStack, $s)
+			__GUICtrlEdit_StackPush($g_dg_hStack, $s)
 		EndIf
 	EndIf
 EndFunc   ;==>__viLoopExecStackPushDbg
@@ -2149,7 +2150,7 @@ EndFunc   ;==>__viLoopExecUnparkStackPop
 
 Func __viLoopExecStackPop($oStack, $oDev)                                               ; pop items off the execute stack
 	__StackPop($oStack)
-	If $oDev.Exists('debug') Then __GUICtrlEdit_StackPop($g_dbg_hStack)
+	If $oDev.Exists('debug') Then __GUICtrlEdit_StackPop($g_dg_hStack)
 EndFunc   ;==>__viLoopExecStackPop
 
 Func __viLoopExecReqComplete($oDev)                                                     ; request is complete, set the flag and check on notifications
@@ -2389,7 +2390,7 @@ Func __viReqQueuePush(ByRef $oDev, $sReq, $bWait = True, $iTimeoutMS = 1000)    
 	If $g_viPrintQueuePush Then ConsoleWrite(@CRLF & "__viReqQueuePush ")
 	__pQuePush($oDev.Item('qreq'), $aReq)
 	If $g_viPrintQueuePush Then __ConsolePrintVars("qout, ", "push", $aReq)
-	If $oDev.Exists('debug') Then __GUICtrlEdit_QueuePush($g_dbg_hQueue, __sPrintVar($aReq, ", "))
+	If $oDev.Exists('debug') Then __GUICtrlEdit_QueuePush($g_dg_hQueue, __sPrintVar($aReq, ", "))
 EndFunc   ;==>__viReqQueuePush
 
 Func __viReqQueueMakeItem($sReq, $bWait = True, $iTimeoutMS = 1000)                 ; make the request item object for the request queue
@@ -2409,7 +2410,7 @@ Func __viReqQueuePop($oDev)
 	If $g_viPrintQueuePop Then ConsoleWrite("__viReqQueuePop ")
 	$aR = __pQuePop($oDev.Item('qreq'))                                             ; pull next request
 	If $g_viPrintQueuePop Then __ConsolePrintVars("quot, ", "pop", $aR)
-	If $oDev.Exists('debug') Then __GUICtrlEdit_QueuePop($g_dbg_hQueue)
+	If $oDev.Exists('debug') Then __GUICtrlEdit_QueuePop($g_dg_hQueue)
 	Return $aR
 EndFunc   ;==>__viReqQueuePop
 
@@ -2470,7 +2471,7 @@ Func __viProcRet($oDev, $sRet, $iStatus = 0)  ; return true if we processed the 
 			If StringLeft($rVar, 1) = "$" Then $rVar = StringTrimLeft($rVar, 1)
 			If $g_viPrintQueuePush Or $g_viPrintQueuePop Then __ConsolePrintVars("__viRetQueuePush, ", "qin $" & $rVar, $sRet)
 			If $g_viPrintCmds Or $g_viPrintReplies Then __ConsolePrintVars($oDev.Item('sAddr') & " visa recv:, ", "$" & $rVar, $sRet)
-			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "< $" & $rVar & "=" & __sPrintVar($sRet) & @CRLF)
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "< $" & $rVar & "=" & __sPrintVar($sRet) & @CRLF)
 
 			If $rVar <> "" Then AssignEx($rVar, $sRet, $oDev)
 			$oDev.Item('rVar') = ''
@@ -2486,14 +2487,14 @@ Func __viProcRet($oDev, $sRet, $iStatus = 0)  ; return true if we processed the 
 			If $g_viPrintQueuePush Or $g_viPrintQueuePop Then __ConsolePrintVars("__viRetQueuePush, ", "qin $$" & $rVar, $sRet)
 			If $g_viPrintCmds Or $g_viPrintReplies Then __ConsolePrintVars($oDev.Item('sAddr') & " visa recv:, ", "$$" & $rVar, $sRet)
 
-			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "< Execute(" & $rVar & ") with " & _
+			If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "< Execute(" & $rVar & ") with " & _
 					__sPrintVar(IsBinary($sRet) ? StringStripWS(BinaryToString($sRet), 3) : $sRet, ", ", "sRet") & @CRLF)
 			$oDev.Item('rExec') = ''
 			Return True
 		EndIf
 	EndIf
 
-	If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dbg_hOutput, "< " & _
+	If $oDev.Exists('debug') Then __GUICtrlEdit_Append($g_dg_hOutput, "< " & _
 			__sPrintVar(IsBinary($sRet) ? StringStripWS(BinaryToString($sRet), 3) : $sRet, ", ") & @CRLF)
 	Return ($rNotice <> "")
 EndFunc   ;==>__viProcRet
@@ -3223,7 +3224,7 @@ Func __TCP_IsOpen($hSocket)                                                 ; Re
 			"struct*", $tFdExcept, _ ; Monitoring for errors/disconnections
 			"struct*", $tTimeVal)    ; Non-blocking timeout pointer
 	If @error Then Return False                                             ; Handle DllCall failure
-	__ConsolePrintVars("__TCP_IsOpen, ", "aRet", $aRet, "hSocket", $hSocket)
+	;__ConsolePrintVars("__TCP_IsOpen, ", "aRet", $aRet, "hSocket", $hSocket)
 	Return (0 = $aRet[0])                                                   ; return true if status is 0 - all ok
 	;Local $iReadySockets = $aRet[0]                                        ; select returns the total number of sockets matching the condition
 	;If $iReadySockets > 0 Then Return False                                ; The socket triggered an exception (disconnected, reset, or broken)
