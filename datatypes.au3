@@ -277,18 +277,38 @@ EndFunc   ;==>_Bits
 
 
 
+;		StringSplitFirst
+; in:	$s = string
+;		$d = delimiter
+; out:	[0] = string text up to first found delimiter
+;		[1] = string text past first found delimiter
+;		[1] = empty if no delimiter found
+Func __StringSplitFirst($s, $d=",")
+	Local $t = ""
+	Local $j = StringInStr($s, $d)
+	If $j > 0 Then
+		$t = StringTrimLeft($s, $j)
+		$s = StringLeft($s, $j - 1)
+	EndIf
+	Local $a = [$s, $t]
+	Return $a
+EndFunc   ;==>__StringSplitFirst
+
+
+
+
 ;		convert number fN to a prety print string including its order of magnitude/exponent prefix
 Func __NumEgr($f, $p = 2)
 	$f = Number($f)
 	Local $a = ["Q", 30, "R", 27, "Y", 24, "Z", 21, "E", 18, "P", 15, "T", 12, "G", 9, "M", 6, "k", 3, "", 0, "m", -3, "u", -6, "n", -9, "p", -12, "f", -15, "a", -18, "z", -21, "y", -24, "r", -27, "q", -30]
-	Local $i, $n = ubound($a) - 1, $e
+	Local $i, $n = UBound($a) - 1, $e
 	$g = Abs($f)
 	For $i = 0 To $n Step 2
 		$e = 10 ^ $a[$i + 1]
 		If $g >= $e Then ExitLoop
 	Next
 	Return StringFormat("%." & $p & "f " & $a[$i], $f / $e)
-EndFunc   ;==>__NumMetricPrefix
+EndFunc   ;==>__NumEgr
 
 
 

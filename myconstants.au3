@@ -51,7 +51,11 @@ Global Const $ICON_EARROW2 = ChrW32(0x1F852)
 Global Const $ICON_SARROW1 = ChrW(0x2195)
 Global Const $ICON_SARROW2 = ChrW32(0x1F853)
 
-
+Global Const $ICON_PLAY = ChrW(0x25B6)
+Global Const $ICON_PAUSE = ChrW(0x23F8)
+Global Const $ICON_STOP = ChrW(0x23F9)
+Global Const $ICON_NEXT = ChrW(0x23ED)
+Global Const $ICON_PREV = ChrW(0x23EE)
 
 
 Global Const $COLOR_NEUTRAL = 0xFDFDFD
@@ -63,6 +67,7 @@ Global Const $COLOR_GREEN2 = 0x00FF00
 Global Const $COLOR_PURPLE2 = 0xFF00FF
 ;Global Const $COLOR_BLACK = 0x000000
 ;Global Const $COLOR_WHITE = 0xFFFFFF
+;Global Const $COLOR_AZURE = 0x0080FF
 
 
 

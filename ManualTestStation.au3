@@ -1,6 +1,25 @@
 #cs
 
 
+tabMeasure:
+change tabmeasure channel selection box to be a full combo box
+inclrease width of channel selection
+move channel selection to the right of the bus name - increasing the number of columns
+check the position of bus selection, and bus count input fields
+change height of combo boxes to 20, not 22
+
+change height of aMeas rows from 20 to 25
+
+when setting up the variables for the measurement viscript, add one that pulls the chamber setpoint
+
+
+    __viGetID
+	  - try ping first?  to verify ip address?
+	  - first try a modbus command to read a register, if successful then do complete modbus IDN sequence to get string and set sAddr to raw mode or use a different string to indicate modbus only mode "modbus:ipaddr:502"
+	  - next try visa vxi-11 protocol *IDN? string, if successful then set sAddr to vxi-11 string
+	  - finally try raw mode, if successful then set sAddr to "raw:..."
+	  - if nothing worked, then leave sAddr at raw mode or empty string to signal no communications and if any new items added to queue to maybe try communications again
+
 	debug __viGetIDbg
 	  solved the issue with the excess traffic - that was a receive binary request when in raw socket mode.  this is now fixed
 	  this routine still has issues, now everytime it is run it toggles the mode (vxi/raw) but does not appear to detect that the first mode was working
@@ -13,12 +32,78 @@
 	when closing conditional script statement, there appears to be a pause - guessing a timeout as if it thinks there is a command running
 	  for this, check the end of LoopExec to see what it does with a sCmd or sReq string that evaluates to a blank string.  If waitReply is true this might account for the pause
 
+	add checkbox inbetween set and capture - if checked then pause for technician to verify measurement
+	when building tab, add array of elements to save and restore states/data into ini file.  the list will be just the ctrl handles and the save/restore function will
+	  identify the type of control and save/restore using the index number in the array as the key
 
-	? change FC file select fields to be just one field, the save data option will just use the save picture path and change the extension to '.txt'.
-	  Also add an option to include '{freq}' somewhere in the file name or path.  This will be replaced by the center frequency $fMean.
-	  add a function that finds the nearest 3 decimal places for the number and trims it down to that, then keeps 2 decimal places, and also adds metric suffix for the order of magnitude
-	- implemented - needs debug
 
+
+	test config files:
+	- add separate picture window for verifying the measurement
+	  - read from test ini file or use the index number of the measurement as the picture file name and text to show below the picture for each measurement
+	  - start with the one timing diagram picture for the overall test.  clone it and highlight each measurement, then in the measurement info / picture window pull it up for each measurement
+	  - add test below the picture to help indicate what is being measured and what conditions to look for
+	- main test template
+	  . title / name of the test (I2C, SPI/Flash, QSPI, fNIC-I2C, clocks, ...)
+	  . list of measurements to be taken (each one is done on the oscope, a screenshot is grabbed)
+	    - variables to pull from include PN, name (dev/hw)
+	  . list of signals for the bus.  these will be the variable names to assin the channels on the scope to, and also label for the channel
+	  . this template will be used to make the Test Tab
+	    . left section will have 4 columns and list the measurements to take
+		  - 1 = checkbox to include this measurement
+		  - 2 = measurement name (i.e. Tr, Tf for rise and fall time)
+		  - 3 = button to set up scope badges 'Setup' with tip 'configure scope for measurement'
+		  - 4 = button to capture measurement 'Capture' with tip 'Capture measurement on scope'
+		. right section will be the signal names and scope channel selection
+		  - first have a drop down of 1-4 for how many busses to measure
+		  - under this will be the 2 column list
+		    . this will be one set of signals for each bus iteration number above (1-4)
+		    . column 1 = signal/net name (i.e. SCL or SDA)
+			. column 2 = drop down selector for scope channel
+		. below the left and right sections will be a run/pause button (play arrow/pause bars), back (rewind button), skip (forward button), and abort (stop button)
+		. indicator fields - measurement info window
+		  - put this stuff in the information picture frame
+		  - which bus iteration is being measured (0=no iteration, do not include this in any screen capture information)
+		  - chamber temperature - a signle reading when starting to measure
+		  - which test measurement is being made
+		  - message field for messages to the client
+		. how it will work
+		  - if the client pushes the setup or capture buttons then it will immediately perform the operation
+		  - if the client pushes the play button to run the selected tests, then
+		    . first iterate thru each bus number
+			  - next iterate thru each selected test
+			    . perform the scope setup scipt
+				. change play button to play arrow to indicate we are paused.  update client message field telling them to verify measurement on scope and click play to continue
+				. after user/client hits play again, then run scope capture script
+			  - continue to next iteration
+			. continue to next iteration
+			. other button functions
+			  - stop: abort all testing
+			  - rewind - go back to previous measurement and redo it
+			  - skip - skip current measurement and start working on the next one
+		. all user settings in the tab will be saved to a special ini file with the name of the template file that created this tab.  example: i2c.txt, i2c.ini
+	- each measurement script file
+	  . named with main template file and measurement being taken.  example:  i2c_tf.txt
+	  . two sections - setup and capture
+	  . setup section adds all the badges and settings to the scope
+	    - use signal net names as variables (i.e. $scl $sda...) in place of channel numbers so that we follow what the client specified for which channel is connected to which signal
+		  . set the channel label to the signal name
+		- use a variable like $bus for which bus number we are currently measuring
+		- visa/scpi commands to set up the scope
+		- variable like $f for bus frequency if needed (i.e. 100k, 400k, 1M)
+		- variable $temp for chamber temperature setpoint (-5C 25C 70C)
+		- set up all labels as well - title and such.  referr to MTF for title convension
+	  . capture section
+	    - use a variable to tell which folder the screenshot should be saved to
+		  . append $temp, $f, $port, and any other information appropriate for the file name
+		- pull measurements from the badges
+		  . place them in an excel spreadsheet
+		  . allow for a variable to specify the filename of the spreadsheet
+		  . allow for it to place each measurement in a specific sheet, row, and column of the spreadsheet
+		  . check to see if we can edit both excel spreadsheets on a file location like local or coos
+		  . check to see if we can also edit excel files on a shared onedrive link.  If so, then we can save the information directly to the test plan
+		  . allow for arithmetic and expression evaluation so we can select column number from temperature setting, and other ideas
+		  . for Jitter measurement, pull stddev and mean, put stddev first in the cell
 
 
 
@@ -158,8 +243,9 @@
 
 Global $g_hMainGui, $g_cTab, $g_hTab
 Global $g_oMainCanvas = ObjCreate("Scripting.Dictionary")
-Global $g_controlBarHeight
+Global $g_cb_iH
 
+Global $g_sTestProfile, $g_sTPiniFile = ""  													; test measurement tabs
 
 Global $g_configFile, $g_configSection                                                          ; config file variables
 Global $g_instConfigSection = "VISA_Devices"                                                    ; device list section
@@ -221,12 +307,13 @@ ProgressSet(50)
 
 ConfigFileInit("mts")
 
-#include "tab_oscope.au3" ; oscope tab
-#include "tab_FrequencyCounter.au3" ; frequency counter tab
-#include "tab_DC_Power_Supply.au3" ; DC Power Supply tab
-#include "tab_Chamber.au3" ; thermal chamber tab
-#include "tab_diag.au3" ; visa / scpi debug tool
-#include "tab_oscopeFM.au3" ; oscope file manager tab
+#include "tabOscope.au3" ; oscope tab
+#include "tabFrequencyCounter.au3" ; frequency counter tab
+#include "tabDCpowerSupply.au3" ; DC Power Supply tab
+#include "tabChamber.au3" ; thermal chamber tab
+#include "tabDiag.au3" ; visa / scpi debug tool
+#include "tabOscopeFM.au3" ; oscope file manager tab
+#include "tabMeasure.au3" ; measurment tab
 
 
 CreateMainGUI()                                     ; create main gui window
@@ -244,12 +331,15 @@ scTab_init()                                        ; initialize oscopeTab
 fcTab_init()                                        ; initialize fcTab
 dcTab_init()                                        ; initialize dcpsTab
 tcTab_init()                                        ; initialize chamberTab
-dgTab_init()                                       ; initialize dbgTab
+tpTab_init()                                        ; initialize tpTab
+dgTab_init()                                        ; initialize dgTab
 ProgressSet(90)
+
+ControlBar_Init()                                   ; initialize the control bar, must be done after dcTab_init as it pulls labels from dcTab after it reads the config file
 
 ConfigReadAll()                                     ; Load config
 ProgressSet(100)
-ControlBar_Init()                                   ; initialize the control bar
+
 ProgressOff()
 
 
@@ -299,7 +389,8 @@ Func Canvas_MainInit()
 	Local $aSize = WinGetClientSize($g_hMainGui)
 	Local $aDef[2] = [800, 600]
 	If Not IsArray($aSize) Then $aSize = $aDef
-	__Canvas_Create($g_oMainCanvas, -1, $aSize[0], $aSize[1])
+	__Canvas_Create($g_oMainCanvas, $aSize[0], $aSize[1])
+	;__Canvas_Add($g_oMainCanvas, -1, -1)
 	$g_oMainCanvas.Item('hCanvas') = $g_hMainGui
 	Local $aCtrls[0], $n
 	If $g_oMainCanvas.Exists('aTabCtrls') Then $aCtrls = $g_oMainCanvas.Item('aTabCtrls')
@@ -308,6 +399,7 @@ Func Canvas_MainInit()
 	$aCtrls[$n] = $g_hTab
 	$g_oMainCanvas.Item('aTabCtrls') = $aCtrls
 	;__Canvas_ZoomCatalog($g_oMainCanvas)
+	__Canvas_ZoomCatalog($g_oMainCanvas, 'aTabCtrls')
 EndFunc   ;==>Canvas_MainInit
 
 
@@ -316,43 +408,45 @@ EndFunc   ;==>Canvas_MainInit
 Func CreateMainGUI()
 	Local $V_WIDTH = 800
 	Local $V_HEIGHT = 600
-	$g_controlBarHeight = 20
+	Local $iCBH = 20
+	$g_cb_iH = $iCBH
 
 	$g_hMainGui = GUICreate("ManualTestStation", $V_WIDTH, $V_HEIGHT, -1, -1, _
 			BitOR($WS_MINIMIZEBOX, $WS_MAXIMIZEBOX, $WS_CAPTION, $WS_POPUP, $WS_SYSMENU, $WS_SIZEBOX))      ; main window
 
-	$g_cTab = GUICtrlCreateTab(0, 0, $V_WIDTH, $V_HEIGHT - $g_controlBarHeight)                             ; Create the main Tab Control container
+	$g_cTab = GUICtrlCreateTab(0, 0, $V_WIDTH, $V_HEIGHT - $iCBH)                                           ; Create the main Tab Control container
 	GUICtrlSetResizing(-1, BitOR($GUI_DOCKTOP, $GUI_DOCKLEFT, $GUI_DOCKRIGHT, $GUI_DOCKBOTTOM))             ; resize with entire window
 	$g_hTab = GUICtrlGetHandle($g_cTab)
 
-	TabCreateCanvas("Oscilloscope", "scTab_CanvasGuiCreate", "scTab_TabGuiCreate", _                        ; Tab 0
+	TabCanvasCreate("Oscilloscope", "scTab_CanvasGuiCreate", "scTab_TabGuiCreate", _                        ; Tab 0
 			$CANVASZOOMTYPE_MIN)
 
-	TabCreateCanvas("Chamber", "tcTab_GuiCreate")                                                           ; Tab 1
+	TabCanvasCreate("Chamber", "tcTab_GuiCreate")                                                           ; Tab 1
 
-	TabCreateCanvas("DC Power Supply", "dcTab_GuiCreate")                                                   ; Tab 2
+	TabCanvasCreate("DC Power Supply", "dcTab_GuiCreate")                                                   ; Tab 2
 
-	TabCreateCanvas("Frequency Counter", "fcTab_GuiCreate")                                                 ; Tab 3
+	TabCanvasCreate("Frequency Counter", "fcTab_GuiCreate")                                                 ; Tab 3
 
-	TabCreateCanvas("ScopeFM", "sfTab_GuiCreate")                                                           ; Tab 4
+	TabCanvasCreate("ScopeFM", "sfTab_GuiCreate")                                                           ; Tab 4
 
 	GUICtrlCreateTabItem("Settings")                                                                        ; Tab 5
 
-	GUICtrlCreateTabItem("I2C (test)")                                                                      ; Tab 6
+	TabCanvasCreate("I2C", "tpTab_GuiCreate", "", "", "I2C")                                                ; Tab 6
 
 	;GUICtrlCreateTabItem("SPI")                                                                             ; Tab 7
 
 	;GUICtrlCreateTabItem("Clocks")                                                                          ; Tab 8
 
-	TabCreateCanvas("Diagnostic", "dgTab_GuiCreate", "", $CANVASZOOMTYPE_MIN)                               ; Tab 9
+	TabCanvasCreate("Diagnostic", "dgTab_GuiCreate", "", $CANVASZOOMTYPE_MIN)                               ; Tab 9
 
 	GUICtrlCreateTabItem("")                                                                                ; Close the tab item definition structure
 
-	CreateControlBar(0, $V_HEIGHT - $g_controlBarHeight, $V_WIDTH, $g_controlBarHeight)                     ; add aux control bar to bottom
+	CreateControlBar(0, $V_HEIGHT, $V_WIDTH, $iCBH)                                                         ; add aux control bar to bottom
 
 	GUISetOnEvent($GUI_EVENT_CLOSE, "CloseApp", $g_hMainGui)                                                ; Register the close button action for the main layout frame
 
 EndFunc   ;==>CreateMainGUI
+
 
 
 
@@ -451,7 +545,8 @@ Func ConfigWrite()
 		Next
 	EndIf
 
-	IniWrite($g_configFile, $g_configSection, "tab", GUICtrlRead($g_cTab))                  ; currently selected tab
+	__IniWriteGui($g_cTab, "tab")
+	;IniWrite($g_configFile, $g_configSection, "tab", GUICtrlRead($g_cTab))                  ; currently selected tab
 
 	Instruments_ConfigWrite()
 	Vars_ConfigWrite()

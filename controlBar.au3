@@ -1,8 +1,8 @@
 
 #include-once
 
-#include "tab_Chamber.au3"
-#include "tab_DC_Power_Supply.au3"
+#include "tabChamber.au3"
+#include "tabDCpowerSupply.au3"
 
 
 #include <MsgBoxConstants.au3>
@@ -16,21 +16,20 @@
 
 
 
-Global $g_cb_hD[4], $g_cb_hDup, $g_cb_hDdn                      ; DC PS controls
+Global $g_cb_hD[4], $g_cb_hM[4][4], $g_cb_hDup, $g_cb_hDdn      ; DC PS controls
 Global $g_cb_sD ; $g_cb_bD[4], $g_cb_sD                         ;
 Global $g_cb_hTemp, $g_cb_hTset, $g_cb_hTen, $g_cb_hTeta        ; chamber controls
 Global $g_cb_fTemp, $g_cb_fTset, $g_cb_bTen                     ;
 Global $g_cb_hEn                                                ; global on/off button
-Global $g_cb_iReadTimer, $g_cb_iRefreshInterval = 250           ;
+Global $g_cb_iReadTimer, $g_cb_iRefreshInterval = 750           ;
 Global $g_cb_hMon                                               ; checkbox to enable or disable monitoring of the devices
 Global $g_cb_iEtaTimer = '', $g_cb_fEtaPrevTemp, _              ; calculating eta to reach target temperature
 		$g_cb_fEtaPrevVelocity
 Global $g_cb_togglePeriod = 2000                                ; time between toggles when cycling the power
-Global $g_cb_Tovershoot = 5                                     ; minimum number of degrees delta to get the chamber to turn power up to at least 50% or so
-Global $g_cb_ToverPeriod = 15000                                ; length of time after requesting to overshoot our temperature target before we request the real target
+Global $g_cb_Tovershoot = 4                                     ; minimum number of degrees delta to get the chamber to turn power up to at least 50% or so
+Global $g_cb_ToverPeriod = 10000                                ; length of time after requesting to overshoot our temperature target before we request the real target
 
-Global $g_oMainCanvas
-
+Global $g_oMainCanvas, $g_hMainGui; , $g_cb_iH ;, $g_cb_iY
 
 
 Func CreateControlBar($iX, $iY, $iW, $iH)
@@ -45,6 +44,9 @@ Func CreateControlBar($iX, $iY, $iW, $iH)
 	Local $lbl1, $lbl2, $lbl3, $i, $n
 
 	Local $x = $iX + 15
+
+	$iY -= $iH    ; initial $iY is passed as the height of the overall gui area to place the control bar.  recalculate the Y top left corner for it
+	;$g_cb_iY = $iY
 
 	$g_cb_hMon = GUICtrlCreateCheckbox("Mon", $x, $iY + 1, 40, 17, BitOR($BS_RIGHTBUTTON, $BS_RIGHT))
 	$x += 60
@@ -92,11 +94,12 @@ Func CreateControlBar($iX, $iY, $iW, $iH)
 		GUICtrlSetOnEvent(-1, "__cbDCtoggle")
 		$x += $iWbtn3 + $iWs1
 		$cMenu = GUICtrlCreateContextMenu($g_cb_hD[$i])                                                                     ; context menu (right click) menu for each power button
-		GUICtrlCreateMenuItem("Cycle", $cMenu)
+		$g_cb_hM[$i][0] = $cMenu
+		$g_cb_hM[$i][1] = GUICtrlCreateMenuItem("Cycle", $cMenu)
 		GUICtrlSetOnEvent(-1, "__cbDCcycle")
-		GUICtrlCreateMenuItem("On", $cMenu)
+		$g_cb_hM[$i][2] = GUICtrlCreateMenuItem("On", $cMenu)
 		GUICtrlSetOnEvent(-1, "__cbDCon")
-		GUICtrlCreateMenuItem("Off", $cMenu)
+		$g_cb_hM[$i][3] = GUICtrlCreateMenuItem("Off", $cMenu)
 		GUICtrlSetOnEvent(-1, "__cbDCoff")
 	Next
 	$x += $iWs2
@@ -114,21 +117,22 @@ Func CreateControlBar($iX, $iY, $iW, $iH)
 	If $g_oMainCanvas.Exists('aCBCtrls') Then $aCtrls = $g_oMainCanvas.Item('aCBCtrls')
 	Local $i, $n = UBound($a) - 1, $m = UBound($aCtrls)
 	ReDim $aCtrls[$m + $n + 1]
-	Local $mydock = BitOR($GUI_DOCKLEFT, $GUI_DOCKBOTTOM, $GUI_DOCKSIZE)
+	Local $mydock = $GUI_DOCKALL ; BitOR($GUI_DOCKLEFT, $GUI_DOCKBOTTOM, $GUI_DOCKSIZE) ; BitOR($GUI_DOCKRIGHT, $GUI_DOCKTOP, $GUI_DOCKLEFT, $GUI_DOCKBOTTOM)
 	For $i = 0 To $n
 		GUICtrlSetResizing($a[$i], $mydock)
-		$aCtrls[$m + $i] = $a[$i]
+		$aCtrls[$m + $i] = GUICtrlGetHandle($a[$i])
 	Next
-	$g_oMainCanvas.Item('aSBCtrls') = $aCtrls
+	;??? $g_oMainCanvas.Item('aCBCtrls') = $aCtrls
+	$g_oMainCanvas.Item('aCBCtrls') = $aCtrls
 
 EndFunc   ;==>CreateControlBar
 
 Func ControlBar_Init()
-	;_GUIRegisterMsg($WM_COMMAND, "__cb_WM_COMMAND") ; no longer needed
 	Local $i                                                                                                                ; copy labels from DC PS to buttons on control bar
 	For $i = 0 To 3
 		GUICtrlSetData($g_cb_hD[$i], GUICtrlRead($g_dc_lbl[$i]))
 	Next
+	__Canvas_ZoomCatalog($g_oMainCanvas, 'aCBCtrls')
 	$g_cb_iReadTimer = TimerInit()                                                                                          ; Reset background clock
 	LoopRegister("__cbLoop")
 EndFunc   ;==>ControlBar_Init
@@ -163,8 +167,12 @@ Func __cbTCset($fSP)
 	Local $fTemp = Number(StringTrimRight(GUICtrlRead($g_cb_hTemp), 2))
 	If Abs($fSP - $fTemp) < 3 Then                                      ; if we are within 3 degrees then we need to first overshoot our request so the chamber works towards more than a 3 degree delta, next after a minute or so we set the real temperature
 		__F4Tsetpoint($g_tc_oDev, $fTemp + ($fSP > $fTemp ? 1 : -1) * $g_cb_Tovershoot)
+		__F4TreadBg($g_tc_oDev, $g_iF4Tsetpoint, "g_cb_fTset")
+		__F4TreadBg($g_tc_oDev, $g_iF4Ttemperature, "g_cb_fTemp")
 		__viCmd($g_tc_oDev, "sleep " & $g_cb_ToverPeriod)
 	EndIf
+	__F4TreadBg($g_tc_oDev, $g_iF4Tsetpoint, "g_cb_fTset")
+	__F4TreadBg($g_tc_oDev, $g_iF4Ttemperature, "g_cb_fTemp")
 	__F4Tsetpoint($g_tc_oDev, $fSP)
 	__cbTetaReset()
 EndFunc   ;==>__cbTCset
@@ -190,15 +198,17 @@ EndFunc   ;==>__cbTCen
 
 Func __cbDCcycle()                                                  ; toggle twice
 	Local $j = __cbDCh()
-	Local $bState = dcTab_GuiGetOnState($j, @GUI_CtrlId)            ; grab state from gui button
+	Local $cBtn = $g_cb_hD[$j - 1]
+	Local $bState = dcTab_GuiGetOnState($j, $cBtn)                  ; grab state from gui button
 	__dcps_SetStateBg($g_dc_oDev, $j, Not $bState)                  ; send visa command to set new output state
 	__viCmd($g_dc_oDev, "sleep " & $g_cb_togglePeriod)              ; delay period inbetween toggles
 	__dcps_SetStateBg($g_dc_oDev, $j, $bState)                      ; send visa command to set new output state
-	dcTab_GuiSetOnState($j, Not $bState, True, @GUI_CtrlId, False)  ; update gui button
+	dcTab_GuiSetOnState($j, Not $bState, True, $cBtn, False)        ; update gui button
 EndFunc   ;==>__cbDCcycle
 Func __cbDCtoggle()                                                 ; Toggle once
 	Local $j = __cbDCh()
-	__cbDCset($j, Not dcTab_GuiGetOnState($j, @GUI_CtrlId))         ; get current state, invert it, send it to __cbDCset
+	Local $cBtn = $g_cb_hD[$j - 1]
+	__cbDCset($j, Not dcTab_GuiGetOnState($j, $cBtn))               ; get current state, invert it, send it to __cbDCset
 EndFunc   ;==>__cbDCtoggle
 Func __cbDCon()                                                     ; Turn on
 	__cbDCset(__cbDCh(), True)                                      ;
@@ -208,20 +218,21 @@ Func __cbDCoff()                                                    ; Turn off
 EndFunc   ;==>__cbDCoff
 
 Func __cbDCset($j, $bState)                                         ; send visa command and set button state
+	Local $cBtn = $g_cb_hD[$j - 1]
 	__dcps_SetStateBg($g_dc_oDev, $j, $bState)                      ; send visa command to set new output state
-	dcTab_GuiSetOnState($j, $bState, True, @GUI_CtrlId, False)      ; update gui button
+	dcTab_GuiSetOnState($j, $bState, True, $cBtn, False)            ; update gui button
 EndFunc   ;==>__cbDCset
 
 Func __cbDCh()                                                      ; get button index from @GUI_CtrlId
-	Local $j
+	Local $j = 0
 	Switch @GUI_CtrlId
-		Case $g_cb_hD[0]
+		Case $g_cb_hD[0], $g_cb_hM[0][0], $g_cb_hM[0][1], $g_cb_hM[0][2], $g_cb_hM[0][3]
 			$j = 1
-		Case $g_cb_hD[1]
+		Case $g_cb_hD[1], $g_cb_hM[1][0], $g_cb_hM[1][1], $g_cb_hM[1][2], $g_cb_hM[1][3]
 			$j = 2
-		Case $g_cb_hD[2]
+		Case $g_cb_hD[2], $g_cb_hM[2][0], $g_cb_hM[2][1], $g_cb_hM[2][2], $g_cb_hM[2][3]
 			$j = 3
-		Case $g_cb_hD[3]
+		Case $g_cb_hD[3], $g_cb_hM[3][0], $g_cb_hM[3][1], $g_cb_hM[3][2], $g_cb_hM[3][3]
 			$j = 4
 	EndSwitch
 	Return $j

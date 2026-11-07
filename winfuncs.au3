@@ -199,12 +199,12 @@ Func _GUIRegisterMsg_Handle($hWnd, $iMsg, $wParam, $lParam)
 	Local $oHandle = $_GUIRegisterMsg_Handlers.Item(String($iMsg))
 	If Not IsObj($oHandle) Then Return $GUI_RUNDEFMSG
 	If ObjName($oHandle) <> "Dictionary" Then Return $GUI_RUNDEFMSG
-	Local $sKey, $vRet, $totalRet = $GUI_RUNDEFMSG
+	Local $sKey, $vRet, $finalRet = $GUI_RUNDEFMSG
 	For $sKey In $oHandle
 		$vRet = Call($sKey, $hWnd, $iMsg, $wParam, $lParam)
-		If $vRet <> $GUI_RUNDEFMSG Then $totalRet = $vRet
+		If String($vRet) <> String($GUI_RUNDEFMSG) Then $finalRet = $vRet
 	Next
-	Return $totalRet
+	Return $finalRet
 EndFunc   ;==>_GUIRegisterMsg_Handle
 
 

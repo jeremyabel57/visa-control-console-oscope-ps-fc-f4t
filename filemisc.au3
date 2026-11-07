@@ -40,7 +40,7 @@ Func __FileNameAutoIncrement(ByRef $sFilePath)
 	EndIf
 
 	Local $sR = $sBaseName & "_" & $sNumStr & $sExt
-	While FileExists($sR) And (Number($sNumStr) <> 0)                                    ; stop when file does not exist or number rolled over
+	While FileExists($sR) And (Int($sNumStr) <> 0)                                      ; stop when file does not exist or number rolled over
 		$iNewNum = Int($sNumStr) + 1                                                    ; Increment the number
 		$sNumStr = StringFormat("%0" & $iNumLen & "d", $iNewNum)                        ; Reformat the number with leading zeros matching the original string length
 		If Number($sNumStr) = 0 Then                                                    ; sNumStr = 0 means it rolled over - not enough digits, increase digits
@@ -87,6 +87,16 @@ EndFunc   ;==>__IsFullPathSpecified
 Global $g_configFile, $g_configSection
 
 
+Func __IniReadGui($cCtrl, $sKey, $configSection = $g_configSection, $configFile = $g_configFile)
+	GUICtrlSetData($cCtrl, IniRead($configFile, $configSection, $sKey, GUICtrlRead($cCtrl)))
+EndFunc   ;==>__IniReadGui
+
+
+Func __IniWriteGui($cCtrl, $sKey, $configSection = $g_configSection, $configFile = $g_configFile)
+	IniWrite($configFile, $configSection, $sKey, GUICtrlRead($cCtrl))
+EndFunc   ;==>__IniWriteGui
+
+
 Func __IniReadGuiCheckbox($hCheckbox, $sKey, $configSection = $g_configSection, $configFile = $g_configFile)
 	__GuiCheckbox($hCheckbox, Int(IniRead($configFile, $configSection, $sKey, Int(__GuiCheckbox($hCheckbox)))))
 	;GUICtrlSetState($hCheckbox, _
@@ -120,24 +130,26 @@ EndFunc   ;==>__IniWriteGuiComboBox
 
 Func __IniReadArray($a, $sKey, $configSection = $g_configSection, $configFile = $g_configFile)                  ; read array from ini file, return it
 	Local $nr, $nc, $ir, $ic
-	$nr = Int(IniRead($configFile, $configSection, $sKey & "nr", 0))
-	$nc = Int(IniRead($configFile, $configSection, $sKey & "nc", 0))
-	If $nr <= 0 Then                            ; 1D array
-		If $nc <= 0 Then Return $a              ; no columns found, return default
+	$nr = Int(IniRead($configFile, $configSection, $sKey & "r", 0))
+	$nc = Int(IniRead($configFile, $configSection, $sKey & "c", 0))
+	If $nc <= 0 Or $nr <= 0 Then                ; 1D array
+		If $nr <= 0 Then $nr = $nc
+		If $nr <= 0 Then $nr = Int(IniRead($configFile, $configSection, $sKey & "n", 0))
+		If $nr <= 0 Then Return $a              ; no data found, return default
 		Dim $a[$nr]
 		$nr -= 1
 		For $ir = 0 To $nr
-			$a[$ir] = IniRead($configFile, $configSection, $sKey & "r" & $ir, '')
+			$a[$ir] = IniRead($configFile, $configSection, $sKey & $ir, '')
 		Next
 		Return $a
 	EndIf
-	If $nc <= 0 Then Return $a                  ; no columns found, return default
+	If $nr <= 0 Then Return $a                  ; if no rows found then return default
 	Dim $a[$nr][$nc]                            ; 2D array
 	$nc -= 1
 	$nr -= 1
 	For $ir = 0 To $nr
 		For $ic = 0 To $nc
-			$a[$ir][$ic] = IniRead($configFile, $configSection, $sKey & "r" & $ir & "c" & $ic, '')
+			$a[$ir][$ic] = IniRead($configFile, $configSection, $sKey & $ir & "." & $ic, '')
 		Next
 	Next
 	Return $a
@@ -147,29 +159,76 @@ EndFunc   ;==>__IniReadArray
 
 Func __IniWriteArray($a, $sKey, $configSection = $g_configSection, $configFile = $g_configFile)        ; write array to ini file
 	If Not IsArray($a) Then Return False
-	Local $nr, $nc, $ir, $ic
 	If UBound($a, 0) < 1 Then Return False
+	Local $nr, $nc, $ir, $ic
 	$nr = UBound($a, 1)
 	If $nr <= 0 Then Return False
 	If UBound($a, 0) = 1 Then                   ; 1D array
-		IniWrite($configFile, $configSection, $sKey & "nr", $nr)
+		IniWrite($configFile, $configSection, $sKey & "n", $nr)
 		$nr -= 1
 		For $ir = 0 To $nr
-			IniWrite($configFile, $configSection, $sKey & "r" & $ir, $a[$ir])
+			IniWrite($configFile, $configSection, $sKey & $ir, $a[$ir])
 		Next
 		Return True
 	EndIf
 	$nc = UBound($a, 2)                         ; 2D array
 	If $nc <= 0 Then Return False
-	IniWrite($configFile, $configSection, $sKey & "nr", $nr)
-	IniWrite($configFile, $configSection, $sKey & "nc", $nc)
+	IniWrite($configFile, $configSection, $sKey & "r", $nr)
+	IniWrite($configFile, $configSection, $sKey & "c", $nc)
 	$nr -= 1
 	$nc -= 1
 	For $ir = 0 To $nr
 		For $ic = 0 To $nc
-			IniWrite($configFile, $configSection, $sKey & "r" & $ir & "c" & $ic, $a[$ir][$ic])
+			IniWrite($configFile, $configSection, $sKey & $ir & "." & $ic, $a[$ir][$ic])
 		Next
 	Next
 	Return True
 EndFunc   ;==>__IniWriteArray
+
+
+
+
+
+
+; ????????????????????????????????????
+
+
+; save measurement to excel.  need to split this function into multiple functions - open, read, write, close(with save)
+
+#include <Excel.au3>
+#include <MsgBoxConstants.au3>
+
+Func _CloudExcelWrite($vSheet, $iRow, $iCol, $vValue)
+	; Clean URL direct file location string path
+	Local Const $sUrl = "https://sharepoint.com...."
+
+	; 1. Fire up a hidden background instance of Excel engine
+	Local $oExcel = _Excel_Open(False)
+	If @error Then Return SetError(1, @error, False)
+
+	; 2. Call the native Workbooks.Open engine to handle the HTTP endpoint structure
+	Local $oWorkbook = $oExcel.Application.Workbooks.Open($sUrl)
+	If @error Then
+		_Excel_Close($oExcel)
+		Return SetError(2, @error, False)
+	EndIf
+
+	; 3. Convert numbers to a true coordinate string (e.g., column 3 -> "C")
+	Local $sCellCoord = _Excel_ColumnToLetter($iCol) & $iRow
+
+	; 4. Write data down to the targeted matrix cell
+	_Excel_RangeWrite($oWorkbook, $vSheet, $vValue, $sCellCoord)
+	If @error Then
+		$oExcel.Application.Workbooks($oWorkbook.Name).Close(False) ; close without saving if it fails
+		_Excel_Close($oExcel)
+		Return SetError(3, @error, False)
+	EndIf
+
+	; 5. Save the stream back to the SharePoint server and exit cleanly
+	$oWorkbook.Save()
+	$oExcel.Application.Workbooks($oWorkbook.Name).Close()
+	_Excel_Close($oExcel)
+	Return True
+EndFunc   ;==>_CloudExcelWrite
+
 
